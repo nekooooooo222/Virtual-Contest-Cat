@@ -319,4 +319,26 @@ async def decide_vcontest(channel_id, message_id):
         f"準備して待機するにゃ～！"
     )
 
+# ==========================================
+# Renderの無料枠を騙すためのダミーWebサーバー
+# ==========================================
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_server():
+    # Renderが指定するポート番号を読み込んでサーバーを立てる
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+# Botの処理とは別の裏口（スレッド）でダミーサーバーを動かす
+threading.Thread(target=run_server, daemon=True).start()
+
+# --- この下に元々ある bot.run(TOKEN) が来ます ---
 bot.run(TOKEN)
