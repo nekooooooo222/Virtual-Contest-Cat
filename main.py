@@ -129,14 +129,14 @@ async def register(interaction: discord.Interaction, atcoder_id: str):
 @app_commands.describe(contest_id="コンテストID", user_id="AtCoder ID")
 async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id: str):
     await interaction.response.defer() 
-    log_text = f"🔍 **Cookie突破テスト ({contest_id} / {user_id})**\n\n"
+    log_text = f" **Cookie突破テスト ({contest_id} / {user_id})**\n\n"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
     try:
         s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/standings/json", headers=headers, cookies=cookies, timeout=10)
         if s_res.status_code == 200:
-            log_text += f"**[1. 本家 standings/json]**\nStatus: 200\n✅ **大成功！Cookie突破したにゃ！**\n\n"
+            log_text += f"**[1. 本家 standings/json]**\nStatus: 200\n✅ **成功！Cookie突破したにゃ！**\n\n"
         else:
             log_text += f"**[1. 本家 standings/json]**\nStatus: {s_res.status_code}\n\n"
     except Exception as e: log_text += f"Error: {e}\n\n"
@@ -147,7 +147,7 @@ async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id
         soup = BeautifulSoup(sub_res.text, 'html.parser')
         rows = soup.select('table tbody tr')
         log_text += f"**[2. 本家 提出スクレイピング]**\nStatus: {sub_res.status_code}\n"
-        if rows: log_text += f"✅ **大成功！提出一覧を取得できたにゃ！**\n"
+        if rows: log_text += f" **成功！提出一覧を取得できたにゃ！**\n"
         else: log_text += "取得した提出行数: 0\n"
     except Exception as e: log_text += f"Error: {e}\n"
     await interaction.followup.send(log_text)
@@ -162,19 +162,18 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
         return
     
     now = datetime.datetime.now(JST)
-    # 【テスト用】開始の「1分前」に決定処理を実行
-    run_time = dt - datetime.timedelta(minutes=1) 
+    run_time = dt - datetime.timedelta(minutes=90) 
     
     if run_time < now:
         if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。", ephemeral=True)
-        run_time = now + datetime.timedelta(seconds=30) # 間に合わなければ30秒後に強制決定
+            return await interaction.response.send_message("開始時間が過去だにゃ。時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=10)
 
     base_text = (
-        f"📢 **【最終テスト】バチャコン募集！**\n"
+        f"📢 **バチャコン募集！**\n"
         f"開始時間: {dt.strftime('%Y-%m-%d %H:%M')}\n\n"
         f"参加する人は下のボタンを押すんだにゃ！\n"
-        f"(*{run_time.strftime('%H:%M')} に、回を自動決定するにゃ*)"
+        f"(*{run_time.strftime('%H:%M')} に、ねこが参加者の未プレイ問題から回を自動決定するにゃ*)"
     )
 
     await interaction.response.send_message(f"{base_text}\n\n**【現在の参加者】**\nまだいないにゃ", view=VconJoinView())
@@ -191,26 +190,67 @@ async def decide_vcontest(channel_id, message_id, start_dt):
     if not channel: return
     
     participants_discord_ids = list(vcon_sessions.get(message_id, set()))
-    if not participants_discord_ids: return await channel.send("中止にゃ！")
+    if not participants_discord_ids: return await channel.send("参加者がいなかったので中止にゃ！")
 
     atcoder_ids = [users_data[d_id] for d_id in participants_discord_ids]
-    status_msg = await channel.send(f"**決定処理を開始するにゃ！**\n`データ取得中...`")
+    status_msg = await channel.send(f"**コンテストの決定処理を開始するにゃ！**\n(参加者: {', '.join(atcoder_ids)})\n`データ取得中にゃ...`")
 
-    # 【テスト用】評価関数を完全にスキップしてABC158に強制固定！！
-    chosen_cid = "abc158"
-    await asyncio.sleep(2.0) # ちょっとだけ演出のタメ
+    try: contests_data = (await asyncio.to_thread(requests.get, "https://kenkoooo.com/atcoder/resources/contests.json")).json()
+    except: return await channel.send("APIの取得に失敗したにゃ...")
+        
+    target_contests = set(c["id"] for c in contests_data if c["id"].startswith("abc") and int(c["id"][3:6]) >= 126 and c["id"] not in history_data)
+    if not target_contests: return await channel.send("対象となるコンテストがもうないにゃ！")
+    
+    user_ac_data = {} 
+    for i, user in enumerate(atcoder_ids):
+        await status_msg.edit(content=f"**コンテストの決定処理を開始するにゃ！**\n`データ取得中... ({i+1}/{len(atcoder_ids)}人完了)`")
+        user_ac_data[user] = {}
+        try:
+            url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}"
+            await asyncio.sleep(1.0) 
+            subs = (await asyncio.to_thread(requests.get, url)).json()
+            for sub in subs:
+                if sub["result"] == "AC" and sub["contest_id"] in target_contests:
+                    user_ac_data[user].setdefault(sub["contest_id"], set()).add(sub["problem_id"].split("_")[-1])
+        except: pass
+
+    await status_msg.edit(content=f" `全員のデータを取得完了！最適な回を計算中にゃ～`")
+
+    valid_contests = [] 
+    for cid in target_contests:
+        is_6_prob = (126 <= int(cid[3:6]) <= 211)
+        exclude, total_score, score_4_over = False, 0, 0
+        for user in atcoder_ids:
+            ac_set = user_ac_data[user].get(cid, set())
+            if len(ac_set) >= 5 or any(len(idx)>1 or idx>='f' for idx in ac_set):
+                exclude = True; break
+            score = 0
+            if is_6_prob: score += 1.5 if 'd' in ac_set else 0; score += 4 if 'e' in ac_set else 0
+            else: score += 1 if 'd' in ac_set else 0; score += 3 if 'e' in ac_set else 0
+            total_score += score
+            if score >= 4: score_4_over += 1
+        if not exclude and (score_4_over / len(atcoder_ids)) < 0.35:
+            valid_contests.append((cid, total_score))
+
+    if not valid_contests: return await channel.send("対象となるコンテストがもうないにゃ！")
+
+    valid_contests.sort(key=lambda x: x[1])
+    scores = [(cid, score + 1) for cid, score in valid_contests[:30]]
+    min_score_6 = scores[0][1] ** 6
+    weights = [min_score_6 / (s ** 6) for _, s in scores]
+    chosen_cid = random.choices([c for c, _ in scores], weights=weights, k=1)[0]
     
     history_data.append(chosen_cid)
     await save_data_to_channel(bot)
     
     await status_msg.delete()
     await channel.send(
-        f"**今回のバチャコンの回が決定しました！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
-        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※超爆速テスト用: 1分間バチャ。提出制限解除！)*"
+        f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
+        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n 参加する人はがんばってにゃ～ \n (終了から1分後に、自動で結果発表とパフォ計算を行うにゃ！)*"
     )
 
-    # 【テスト用】終了時刻(1分後) + 1分後 に結果発表を予約！(合計2分後)
-    end_time = start_dt + datetime.timedelta(minutes=2)
+    # 終了時刻(100分後) + 1分後 に結果発表を予約！
+    end_time = start_dt + datetime.timedelta(minutes=101)
     scheduler.add_job(
         aggregate_vcontest, 'date', run_date=end_time, 
         args=[channel_id, chosen_cid, participants_discord_ids, start_dt]
@@ -222,11 +262,11 @@ async def decide_vcontest(channel_id, message_id, start_dt):
 async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     channel = bot.get_channel(channel_id)
     if not channel: return
-    await channel.send(f"🏁 **{cid.upper()} バチャコン終了！！**\n`ただいま結果とパフォーマンスを集計中にゃ...`")
+    await channel.send(f" **{cid.upper()} バチャコン終了にゃ！！**\n`結果とパフォを取りに行ってくるにゃ～`")
 
     start_epoch = int(start_dt.timestamp())
-    # 【テスト用】コンテスト時間は1分間（1 * 60秒）
-    end_epoch = start_epoch + 1 * 60
+    # 100分間バチャ
+    end_epoch = start_epoch + 100 * 60
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
@@ -247,7 +287,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
         if not user: continue
         
         subs = []
-        for page in range(1, 3):
+        for page in range(1, 4): # 最大3ページ(60提出)まで見る
             url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
             await asyncio.sleep(1.0)
             res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies)
@@ -266,15 +306,16 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
                     sub_epoch = int(sub_dt.timestamp())
                 except: continue
 
-                # 【テスト用】時間制限のフィルタリングを削除！全部拾うにゃ！
-                task_link = cells[1].find('a')
-                task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
-                score_text = cells[4].text.strip()
-                score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
-                result_label = cells[6].find('span')
-                result = result_label.text.strip() if result_label else "WJ"
+                # バチャ期間内の提出のみを対象
+                if start_epoch <= sub_epoch <= end_epoch:
+                    task_link = cells[1].find('a')
+                    task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
+                    score_text = cells[4].text.strip()
+                    score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                    result_label = cells[6].find('span')
+                    result = result_label.text.strip() if result_label else "WJ"
 
-                subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score})
+                    subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score})
             if len(rows) < 20: break 
 
         subs.sort(key=lambda x: x["epoch_second"])
@@ -293,10 +334,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
             if p_data['ac_time'] != -1: continue 
             
             if sub["result"] == "AC":
-                # 【テスト用】過去の提出の場合は、開始から1秒後に爆速ACしたことにするにゃ！
                 elapsed_sec = sub["epoch_second"] - start_epoch
-                if elapsed_sec < 0: elapsed_sec = 1 
-                
                 p_data['ac_time'] = elapsed_sec
                 p_data['point'] = sub["point"]
                 total_score += sub["point"]
@@ -314,7 +352,6 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
             if s_score > total_score: v_rank += 1
             elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
             
-        # 【バグ修正】KeyErrorを防止！安全に.get()で取得する
         perf = "-"
         for r in results:
             if r.get("Rank") == v_rank or r.get("Place") == v_rank:
@@ -333,7 +370,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
 
     ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
 
-    msg_lines = [f"🏆 **{cid.upper()} バチャコン 最終結果** 🏆"]
+    msg_lines = [f"**{cid.upper()} バチャコンの結果を発表するにゃ！**"]
     for i, data in enumerate(ranking_data):
         m, s = divmod(data["time"], 60)
         time_str = f"{int(m)}:{int(s):02d}"
@@ -359,7 +396,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
 
         task_line = " | ".join(task_strs) if task_strs else "提出なし"
         
-        msg_lines.append(f"**{i+1}({data['rank']})位**: {data['user']}@{data['display']}  {data['score']}pts - {time_str}({data['penalties']}) perf : **{data['perf']}**")
+        msg_lines.append(f"**{i+1}({data['rank']})位**: {data['user']} @{data['display']}  {data['score']}pts - {time_str}({data['penalties']}) perf : **{data['perf']}**")
         msg_lines.append(f"  [{task_line}]")
 
     await channel.send("\n".join(msg_lines))
