@@ -33,7 +33,6 @@ async def load_data_from_channel(bot):
     channel = bot.get_channel(DATA_CHANNEL_ID)
     if not channel: return
 
-    # limitを50に増やし、どんな改行コードでも絶対に読み込めるように修正！
     async for msg in channel.history(limit=50):
         if msg.author == bot.user and "```json" in msg.content:
             try:
@@ -135,7 +134,9 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
         return
     
     now = datetime.datetime.now(JST)
-    run_time = dt - datetime.timedelta(minutes=90) 
+    
+    # 【テスト用】開始の「2分前」に決定処理を実行
+    run_time = dt - datetime.timedelta(minutes=2) 
     
     if run_time < now:
         if dt < now:
@@ -144,7 +145,7 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
         run_time = now + datetime.timedelta(minutes=1)
 
     base_text = (
-        f"📢 **バチャコン募集！**\n"
+        f"📢 **【テスト】バチャコン募集！**\n"
         f"開始時間: {dt.strftime('%Y-%m-%d %H:%M')}\n\n"
         f"参加する人は下のボタンを押すんだにゃ！\n"
         f"(*{run_time.strftime('%H:%M')} に、ねこが参加者の未プレイ問題から回を自動決定するにゃ*)"
@@ -226,10 +227,11 @@ async def decide_vcontest(channel_id, message_id, start_dt):
     await status_msg.delete()
     await channel.send(
         f"**今回のバチャコンの回が決定しました！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
-        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※終了から1分後に、自動で結果発表とパフォ計算を行うにゃ！)*"
+        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※テスト用: 3分間バチャ。終了から1分後に結果発表を行うにゃ！)*"
     )
 
-    end_time = start_dt + datetime.timedelta(minutes=101)
+    # 【テスト用】終了時刻(3分後) + 1分後に結果発表を予約！
+    end_time = start_dt + datetime.timedelta(minutes=4)
     scheduler.add_job(
         aggregate_vcontest, 'date', run_date=end_time, 
         args=[channel_id, chosen_cid, participants_discord_ids, start_dt]
@@ -244,9 +246,9 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     await channel.send(f"🏁 **{cid.upper()} バチャコン終了！！**\n`ただいま本家AtCoderから結果とパフォーマンスを集計中にゃ...`")
 
     start_epoch = int(start_dt.timestamp())
-    end_epoch = start_epoch + 1 * 60
+    # 【テスト用】コンテスト時間は3分間（3 * 60秒）
+    end_epoch = start_epoch + 3 * 60
 
-    # 【バグ修正】身分証(User-Agent)を追加＆エラー内容を表示
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, timeout=20)
@@ -268,7 +270,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
         for page in range(1, 3):
             url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
             await asyncio.sleep(1.0)
-            res = await asyncio.to_thread(requests.get, url)
+            res = await asyncio.to_thread(requests.get, url, headers=headers)
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.select('table tbody tr')
             if not rows: break
