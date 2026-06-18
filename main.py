@@ -11,15 +11,12 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from bs4 import BeautifulSoup
 
 # ==========================================
 # 設定とデータベース
 # ==========================================
 TOKEN = os.getenv("DISCORD_TOKEN") 
 DATA_CHANNEL_ID = int(os.getenv("DATA_CHANNEL_ID", 0))
-ATCODER_USERNAME = os.getenv("ATCODER_USERNAME")
-ATCODER_PASSWORD = os.getenv("ATCODER_PASSWORD")
 
 users_data = {}
 history_data = []
@@ -101,7 +98,7 @@ class VconJoinView(discord.ui.View):
         await interaction.message.edit(content=new_content)
 
 # ==========================================
-# Botの設定
+# Botの設定とコマンド
 # ==========================================
 intents = discord.Intents.default()
 intents.message_content = True
@@ -119,66 +116,6 @@ async def on_ready():
     if not scheduler.running: scheduler.start()
     await bot.tree.sync()
 
-# ==========================================
-# デバッグ用コマンド (NEW!)
-# ==========================================
-@bot.tree.command(name="test_scrape", description="RenderからのスクレイピングとAPIの挙動をテストするにゃ")
-@app_commands.describe(contest_id="コンテストID (例: abc210)", user_id="AtCoder ID (例: nekooooooo)")
-async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id: str):
-    await interaction.response.defer() 
-    
-    log_text = f"🔍 **テスト開始 ({contest_id} / {user_id})**\n\n"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
-    try:
-        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/results/json", headers=headers, timeout=10)
-        log_text += f"**[1. results直アクセス]**\nStatus: {r_res.status_code}\nContent:\n```html\n{r_res.text[:150]}\n```\n"
-    except Exception as e:
-        log_text += f"**[1. results直アクセス]**\nError: {e}\n\n"
-
-    try:
-        session = requests.Session()
-        session.headers.update(headers)
-        login_url = "https://atcoder.jp/login"
-        res = session.get(login_url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        csrf_token_tag = soup.find(attrs={"name": "csrf_token"})
-        
-        if csrf_token_tag:
-            csrf_token = csrf_token_tag.get("value")
-            login_post = session.post(login_url, data={
-                "username": ATCODER_USERNAME,
-                "password": ATCODER_PASSWORD,
-                "csrf_token": csrf_token
-            }, timeout=10)
-            log_text += f"**[2. ログイン処理]**\nStatus: {login_post.status_code}\n終了後URL: {login_post.url}\n"
-            
-            login_r_res = session.get(f"https://atcoder.jp/contests/{contest_id}/results/json", timeout=10)
-            log_text += f"取得データ:\n```html\n{login_r_res.text[:150]}\n```\n"
-        else:
-            log_text += "**[2. ログイン処理]**\nCSRFトークンが見つからなかったにゃ(Cloudflareに弾かれたかも)\n\n"
-    except Exception as e:
-        log_text += f"**[2. ログイン処理]**\nError: {e}\n\n"
-
-    try:
-        url = f"https://atcoder.jp/contests/{contest_id}/submissions?f.User={user_id}"
-        sub_res = await asyncio.to_thread(requests.get, url, headers=headers)
-        soup = BeautifulSoup(sub_res.text, 'html.parser')
-        rows = soup.select('table tbody tr')
-        
-        log_text += f"**[3. 提出ページ取得]**\nStatus: {sub_res.status_code}\n取得した提出行数: {len(rows)}\n"
-        if rows:
-            cells = rows[0].find_all('td')
-            if len(cells) >= 8:
-                log_text += f"最新の提出: {cells[0].text.strip()} | 問題: {cells[1].text.strip()} | 結果: {cells[6].text.strip()}\n"
-    except Exception as e:
-        log_text += f"**[3. 提出ページ取得]**\nError: {e}\n"
-
-    await interaction.followup.send(log_text)
-
-# ==========================================
-# コマンド群
-# ==========================================
 @bot.tree.command(name="register", description="自分のAtCoder IDをBotに登録するにゃ")
 @app_commands.describe(atcoder_id="あなたのAtCoder IDを入力してにゃ")
 async def register(interaction: discord.Interaction, atcoder_id: str):
@@ -196,7 +133,9 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
         return
     
     now = datetime.datetime.now(JST)
-    run_time = dt - datetime.timedelta(minutes=2) # テスト用
+    
+    # 【テスト用】開始の「2分前」に決定処理を実行
+    run_time = dt - datetime.timedelta(minutes=2) 
     
     if run_time < now:
         if dt < now:
@@ -287,100 +226,65 @@ async def decide_vcontest(channel_id, message_id, start_dt):
     await status_msg.delete()
     await channel.send(
         f"**今回のバチャコンの回が決定しました！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
-        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※テスト用: 3分間バチャ。終了から1分後に結果発表を行うにゃ！)*"
+        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※テスト用: 3分間バチャ。終了から2分後に結果発表を行うにゃ！)*"
     )
 
-    end_time = start_dt + datetime.timedelta(minutes=4)
+    # 【テスト用】終了時刻(3分後) + 2分後 に結果発表を予約！
+    end_time = start_dt + datetime.timedelta(minutes=5)
     scheduler.add_job(
         aggregate_vcontest, 'date', run_date=end_time, 
         args=[channel_id, chosen_cid, participants_discord_ids, start_dt]
     )
 
 # ==========================================
-# 本家スクレイピング・自動集計・パフォ計算
+# ハイブリッド方式：自動集計・パフォ計算
 # ==========================================
 async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     channel = bot.get_channel(channel_id)
     if not channel: return
-    await channel.send(f"🏁 **{cid.upper()} バチャコン終了！！**\n`ただいま本家AtCoderから結果とパフォーマンスを集計中にゃ...`")
+    await channel.send(f"🏁 **{cid.upper()} バチャコン終了！！**\n`ただいま結果とパフォーマンスを集計中にゃ...`")
 
     start_epoch = int(start_dt.timestamp())
+    # 【テスト用】コンテスト時間は3分間（3 * 60秒）
     end_epoch = start_epoch + 3 * 60
 
+    # 1. パフォ計算用の「本番データ」は本家から直アクセスで取得（非ログインでOK！）
     try:
-        def fetch_data():
-            session = requests.Session()
-            session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-            
-            login_url = "https://atcoder.jp/login"
-            res = session.get(login_url, timeout=10)
-            soup = BeautifulSoup(res.text, "html.parser")
-            csrf_token_tag = soup.find(attrs={"name": "csrf_token"})
-            
-            if csrf_token_tag and ATCODER_USERNAME and ATCODER_PASSWORD:
-                csrf_token = csrf_token_tag.get("value")
-                session.post(login_url, data={
-                    "username": ATCODER_USERNAME,
-                    "password": ATCODER_PASSWORD,
-                    "csrf_token": csrf_token
-                }, timeout=10)
-            
-            s_res = session.get(f"https://atcoder.jp/contests/{cid}/standings/json", timeout=20)
-            r_res = session.get(f"https://atcoder.jp/contests/{cid}/results/json", timeout=20)
-            return s_res.json(), r_res.json(), session
-            
-        standings, results, atcoder_session = await asyncio.to_thread(fetch_data)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, timeout=20)
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, timeout=20)
+        standings = s_res.json()
+        results = r_res.json()
     except Exception as e:
-        print(f"本番データ取得エラー: {e}")
-        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)\n*(※Renderの環境変数に ATCODER_USERNAME と ATCODER_PASSWORD が正しく設定されているか確認してにゃ！)*")
+        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)")
 
     tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
     
+    # 2. 提出データは「AtCoder Problems API」から安全に取得！
     ranking_data = []
     for d_id in discord_ids:
         user = users_data.get(d_id)
         if not user: continue
         
-        subs = []
-        for page in range(1, 3):
-            url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
-            await asyncio.sleep(1.0)
-            res = await asyncio.to_thread(atcoder_session.get, url)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            rows = soup.select('table tbody tr')
-            if not rows: break
+        # Problems API の from_second でバチャ開始以降の提出を狙い撃ち
+        url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}&from_second={start_epoch}"
+        await asyncio.sleep(1.0)
+        try:
+            subs = (await asyncio.to_thread(requests.get, url, timeout=10)).json()
+        except:
+            subs = []
 
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) < 8: continue
-                time_tag = cells[0].find('time')
-                if not time_tag: continue
-
-                try:
-                    sub_dt = datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
-                    sub_epoch = int(sub_dt.timestamp())
-                except: continue
-
-                if start_epoch <= sub_epoch <= end_epoch:
-                    task_link = cells[1].find('a')
-                    task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
-                    score_text = cells[4].text.strip()
-                    score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
-                    result_label = cells[6].find('span')
-                    result = result_label.text.strip() if result_label else "WJ"
-
-                    subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score})
-            if len(rows) < 20: break 
-
-        subs.sort(key=lambda x: x["epoch_second"])
+        # このコンテストの提出で、かつ終了時間前のものだけを抽出して古い順に並べる
+        valid_subs = sorted([s for s in subs if s["contest_id"] == cid and s["epoch_second"] <= end_epoch], key=lambda x: x["epoch_second"])
         
         problem_status = {}
         total_score = 0
         last_ac_time = 0
         total_penalties = 0
 
-        for sub in subs:
-            task_idx = sub["problem_id"]
+        for sub in valid_subs:
+            # ex: abc210_a -> A
+            task_idx = sub["problem_id"].split('_')[-1].upper()
             if task_idx not in problem_status:
                 problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
             
@@ -399,6 +303,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
 
         elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
         
+        # 仮想順位の計算
         v_rank = 1
         for s in standings["StandingsData"]:
             s_score = s["TotalResult"]["Score"] / 100
@@ -406,6 +311,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
             if s_score > total_score: v_rank += 1
             elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
             
+        # パフォの取得
         perf = "-"
         for r in results:
             if r["Rank"] == v_rank or r["Place"] == v_rank:
