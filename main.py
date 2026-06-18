@@ -244,7 +244,7 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     await channel.send(f"🏁 **{cid.upper()} バチャコン終了！！**\n`ただいま本家AtCoderから結果とパフォーマンスを集計中にゃ...`")
 
     start_epoch = int(start_dt.timestamp())
-    end_epoch = start_epoch + 100 * 60
+    end_epoch = start_epoch + 1 * 60
 
     # 【バグ修正】身分証(User-Agent)を追加＆エラー内容を表示
     try:
