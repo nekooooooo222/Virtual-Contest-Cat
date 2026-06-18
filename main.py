@@ -120,43 +120,78 @@ async def on_ready():
 # ==========================================
 # 【デバッグ用】テストコマンド復活！
 # ==========================================
+# ==========================================
+# 【デバッグ用】テストコマンド復活！（超詳細版）
+# ==========================================
 @bot.tree.command(name="test_scrape", description="RenderからのAPI挙動をテストするにゃ")
 @app_commands.describe(contest_id="コンテストID (例: abc210)", user_id="AtCoder ID (例: nekooooooo)")
 async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id: str):
     await interaction.response.defer() 
     
     log_text = f"🔍 **ハイブリッド方式テスト ({contest_id} / {user_id})**\n\n"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
+    # 【魔法のヘッダー】AtCoderに「私はブラウザの中の通信ですよ」と信じ込ませる
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest'
+    }
     
     # 1. 本家 results/json 直アクセス (パフォ基準データ)
     try:
         r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/results/json", headers=headers, timeout=10)
-        log_text += f"**[1. 本家 results/json 直アクセス]**\nStatus: {r_res.status_code}\nContent:\n```json\n{r_res.text[:150]}\n```\n"
+        if r_res.status_code == 200:
+            data = r_res.json()
+            if len(data) > 0:
+                first_item = data[0]
+                keys_str = ", ".join(first_item.keys())
+                user_name = first_item.get("UserScreenName", "見つからないにゃ...")
+                log_text += f"**[1. 本家 results/json]**\nStatus: 200 (大成功！)\n取得データ数: {len(data)}人分\n保有データ項目(Keys):\n`{keys_str}`\n1位の人の名前確認: **{user_name}** (←ちゃんと名前も入ってるにゃ！)\n\n"
+            else:
+                log_text += "**[1. 本家 results/json]**\nStatus: 200\nデータが空だにゃ。\n\n"
+        else:
+            log_text += f"**[1. 本家 results/json]**\nStatus: {r_res.status_code}\nContent(先頭500文字):\n```html\n{r_res.text[:500]}\n```\n\n"
     except Exception as e:
         log_text += f"**[1. 本家 results/json]**\nError: {e}\n\n"
 
     # 2. 本家 standings/json 直アクセス (順位基準データ)
     try:
         s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/standings/json", headers=headers, timeout=10)
-        log_text += f"**[2. 本家 standings/json 直アクセス]**\nStatus: {s_res.status_code}\nContent:\n```json\n{s_res.text[:150]}\n```\n"
+        if s_res.status_code == 200:
+            try:
+                data = s_res.json()
+                task_count = len(data.get('TaskInfo', []))
+                standings_count = len(data.get('StandingsData', []))
+                log_text += f"**[2. 本家 standings/json]**\nStatus: 200 (JSONパース成功！ログイン不要で突破したにゃ！)\n問題数: {task_count}問\n順位表の参加者データ数: {standings_count}人分\n\n"
+            except:
+                log_text += f"**[2. 本家 standings/json]**\nStatus: 200 (JSONパース失敗！HTMLを返された可能性大にゃ...)\nContent(先頭500文字):\n```html\n{s_res.text[:500]}\n```\n\n"
+        else:
+            log_text += f"**[2. 本家 standings/json]**\nStatus: {s_res.status_code}\nContent(先頭500文字):\n```html\n{s_res.text[:500]}\n```\n\n"
     except Exception as e:
         log_text += f"**[2. 本家 standings/json]**\nError: {e}\n\n"
 
     # 3. Problems API submissions (提出データ)
     try:
-        url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user_id}"
+        # from_second=0 をつけて最新仕様に対応！
+        url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user_id}&from_second=0"
         sub_res = await asyncio.to_thread(requests.get, url, timeout=10)
-        subs = sub_res.json()
-        log_text += f"**[3. Problems API 提出取得]**\nStatus: {sub_res.status_code}\n取得した総提出数: {len(subs)}\n"
-        if subs:
-            # 最新の提出を1件表示
-            latest = sorted(subs, key=lambda x: x["epoch_second"], reverse=True)[0]
-            log_text += f"最新の提出: {latest['contest_id']} / {latest['problem_id']} / {latest['result']}\n"
+        
+        if sub_res.status_code == 200:
+            subs = sub_res.json()
+            log_text += f"**[3. Problems API 提出取得]**\nStatus: 200 (大成功！)\n取得した総提出数: {len(subs)}回\n"
+            if subs:
+                # 最新の提出を3件表示
+                latest = sorted(subs, key=lambda x: x["epoch_second"], reverse=True)[:3]
+                log_text += "直近の提出トップ3:\n"
+                for s in latest:
+                    dt = datetime.datetime.fromtimestamp(s['epoch_second'], tz=datetime.timezone(datetime.timedelta(hours=9)))
+                    log_text += f"- [{dt.strftime('%m/%d %H:%M')}] {s['contest_id']} / {s['problem_id']} / **{s['result']}**\n"
+        else:
+            log_text += f"**[3. Problems API 提出取得]**\nStatus: {sub_res.status_code}\nContent:\n```html\n{sub_res.text[:300]}\n```\n"
     except Exception as e:
         log_text += f"**[3. Problems API 提出取得]**\nError: {e}\n"
 
     await interaction.followup.send(log_text)
-
 # ==========================================
 # バチャコンコマンド
 # ==========================================
