@@ -25,7 +25,7 @@ data_message_id = None
 
 scheduler = AsyncIOScheduler()
 vcon_sessions = {}
-JST = timezone(timedelta(hours=9)) # 日本時間を強制！
+JST = timezone(timedelta(hours=9))
 
 async def load_data_from_channel(bot):
     global users_data, history_data, data_message_id
@@ -33,17 +33,19 @@ async def load_data_from_channel(bot):
     channel = bot.get_channel(DATA_CHANNEL_ID)
     if not channel: return
 
-    async for msg in channel.history(limit=10):
-        if msg.author == bot.user and msg.content.startswith("```json"):
+    # limitを50に増やし、どんな改行コードでも絶対に読み込めるように修正！
+    async for msg in channel.history(limit=50):
+        if msg.author == bot.user and "```json" in msg.content:
             try:
-                json_str = msg.content.strip("`").removeprefix("json\n")
+                json_str = msg.content.split("```json")[1].split("```")[0].strip()
                 data = json.loads(json_str)
                 users_data = data.get("users", {})
                 history_data = data.get("history", [])
                 data_message_id = msg.id
                 print("Discordチャンネルからデータを復元したにゃ！")
                 return
-            except: pass
+            except Exception as e: 
+                print(f"データパースエラー: {e}")
 
     await save_data_to_channel(bot)
 
@@ -135,7 +137,6 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
     now = datetime.datetime.now(JST)
     run_time = dt - datetime.timedelta(minutes=90) 
     
-    # 緊急対応：90分前を過ぎていたら、特別に「今から2分後」に決定する！
     if run_time < now:
         if dt < now:
             await interaction.response.send_message("開始時間が過去だにゃ。未来の時間を指定するにゃ～", ephemeral=True)
@@ -228,7 +229,6 @@ async def decide_vcontest(channel_id, message_id, start_dt):
         f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n*(※終了から1分後に、自動で結果発表とパフォ計算を行うにゃ！)*"
     )
 
-    # 終了時刻(100分後) + 1分後にスクレイピング結果発表を予約！
     end_time = start_dt + datetime.timedelta(minutes=101)
     scheduler.add_job(
         aggregate_vcontest, 'date', run_date=end_time, 
@@ -246,11 +246,16 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     start_epoch = int(start_dt.timestamp())
     end_epoch = start_epoch + 100 * 60
 
+    # 【バグ修正】身分証(User-Agent)を追加＆エラー内容を表示
     try:
-        standings = (await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json")).json()
-        results = (await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json")).json()
-    except:
-        return await channel.send("本番データの取得に失敗してパフォが計算できないにゃ...")
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, timeout=20)
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, timeout=20)
+        standings = s_res.json()
+        results = r_res.json()
+    except Exception as e:
+        print(f"本番データ取得エラー: {e}")
+        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)")
 
     tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
     
