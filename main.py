@@ -19,6 +19,10 @@ from bs4 import BeautifulSoup
 TOKEN = os.getenv("DISCORD_TOKEN") 
 DATA_CHANNEL_ID = int(os.getenv("DATA_CHANNEL_ID", 0))
 
+# 【NEW!】環境変数からAtCoderのログイン情報を取得
+ATCODER_USERNAME = os.getenv("ATCODER_USERNAME")
+ATCODER_PASSWORD = os.getenv("ATCODER_PASSWORD")
+
 users_data = {}
 history_data = []
 data_message_id = None 
@@ -250,14 +254,34 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
     end_epoch = start_epoch + 3 * 60
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, timeout=20)
-        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, timeout=20)
-        standings = s_res.json()
-        results = r_res.json()
+        def fetch_data():
+            # AtCoderにログインしてデータを取るためのセッションを作成
+            session = requests.Session()
+            session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+            
+            # ログインページからCSRFトークンを取得してログイン実行
+            login_url = "https://atcoder.jp/login"
+            res = session.get(login_url, timeout=10)
+            soup = BeautifulSoup(res.text, "html.parser")
+            csrf_token_tag = soup.find(attrs={"name": "csrf_token"})
+            
+            if csrf_token_tag and ATCODER_USERNAME and ATCODER_PASSWORD:
+                csrf_token = csrf_token_tag.get("value")
+                session.post(login_url, data={
+                    "username": ATCODER_USERNAME,
+                    "password": ATCODER_PASSWORD,
+                    "csrf_token": csrf_token
+                }, timeout=10)
+            
+            # ログイン状態でデータを取得
+            s_res = session.get(f"https://atcoder.jp/contests/{cid}/standings/json", timeout=20)
+            r_res = session.get(f"https://atcoder.jp/contests/{cid}/results/json", timeout=20)
+            return s_res.json(), r_res.json(), session
+            
+        standings, results, atcoder_session = await asyncio.to_thread(fetch_data)
     except Exception as e:
         print(f"本番データ取得エラー: {e}")
-        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)")
+        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)\n*(※Renderの環境変数に ATCODER_USERNAME と ATCODER_PASSWORD が正しく設定されているか確認してにゃ！)*")
 
     tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
     
@@ -270,7 +294,8 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
         for page in range(1, 3):
             url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
             await asyncio.sleep(1.0)
-            res = await asyncio.to_thread(requests.get, url, headers=headers)
+            # ログイン済みのセッションでスクレイピング
+            res = await asyncio.to_thread(atcoder_session.get, url)
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.select('table tbody tr')
             if not rows: break
