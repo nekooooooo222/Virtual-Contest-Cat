@@ -11,6 +11,7 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from bs4 import BeautifulSoup
 
 # ==========================================
 # 設定とデータベース
@@ -116,6 +117,49 @@ async def on_ready():
     if not scheduler.running: scheduler.start()
     await bot.tree.sync()
 
+# ==========================================
+# 【デバッグ用】テストコマンド復活！
+# ==========================================
+@bot.tree.command(name="test_scrape", description="RenderからのAPI挙動をテストするにゃ")
+@app_commands.describe(contest_id="コンテストID (例: abc210)", user_id="AtCoder ID (例: nekooooooo)")
+async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id: str):
+    await interaction.response.defer() 
+    
+    log_text = f"🔍 **ハイブリッド方式テスト ({contest_id} / {user_id})**\n\n"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
+    # 1. 本家 results/json 直アクセス (パフォ基準データ)
+    try:
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/results/json", headers=headers, timeout=10)
+        log_text += f"**[1. 本家 results/json 直アクセス]**\nStatus: {r_res.status_code}\nContent:\n```json\n{r_res.text[:150]}\n```\n"
+    except Exception as e:
+        log_text += f"**[1. 本家 results/json]**\nError: {e}\n\n"
+
+    # 2. 本家 standings/json 直アクセス (順位基準データ)
+    try:
+        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/standings/json", headers=headers, timeout=10)
+        log_text += f"**[2. 本家 standings/json 直アクセス]**\nStatus: {s_res.status_code}\nContent:\n```json\n{s_res.text[:150]}\n```\n"
+    except Exception as e:
+        log_text += f"**[2. 本家 standings/json]**\nError: {e}\n\n"
+
+    # 3. Problems API submissions (提出データ)
+    try:
+        url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user_id}"
+        sub_res = await asyncio.to_thread(requests.get, url, timeout=10)
+        subs = sub_res.json()
+        log_text += f"**[3. Problems API 提出取得]**\nStatus: {sub_res.status_code}\n取得した総提出数: {len(subs)}\n"
+        if subs:
+            # 最新の提出を1件表示
+            latest = sorted(subs, key=lambda x: x["epoch_second"], reverse=True)[0]
+            log_text += f"最新の提出: {latest['contest_id']} / {latest['problem_id']} / {latest['result']}\n"
+    except Exception as e:
+        log_text += f"**[3. Problems API 提出取得]**\nError: {e}\n"
+
+    await interaction.followup.send(log_text)
+
+# ==========================================
+# バチャコンコマンド
+# ==========================================
 @bot.tree.command(name="register", description="自分のAtCoder IDをBotに登録するにゃ")
 @app_commands.describe(atcoder_id="あなたのAtCoder IDを入力してにゃ")
 async def register(interaction: discord.Interaction, atcoder_id: str):
