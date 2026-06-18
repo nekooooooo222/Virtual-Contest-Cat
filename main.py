@@ -141,7 +141,7 @@ async def vcontest(interaction: discord.Interaction, start_time: str):
         if dt < now:
             await interaction.response.send_message("開始時間が過去だにゃ。未来の時間を指定するにゃ～", ephemeral=True)
             return
-        run_time = now + datetime.timedelta(minutes=2)
+        run_time = now + datetime.timedelta(minutes=1)
 
     base_text = (
         f"📢 **バチャコン募集！**\n"
