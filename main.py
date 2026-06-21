@@ -12,6 +12,7 @@ import math
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from aiohttp import web
+import io 
 
 # ==========================================
 # 設定とデータベース
@@ -45,40 +46,49 @@ async def load_data_from_channel(bot):
     if not channel: return
 
     async for msg in channel.history(limit=50):
-        if msg.author == bot.user and "```json" in msg.content:
+        if msg.author == bot.user: # (条件を少しシンプルにします)
             try:
-                json_str = msg.content.split("```json")[1].split("```")[0].strip()
-                data = json.loads(json_str)
-                users_data = data.get("users", {})
-                history_data = data.get("history", [])
-                vcons_data = data.get("vcons", {})
-                data_message_id = msg.id
-                print("Discordチャンネルからデータを復元したにゃ！")
+                json_str = None
                 
-                # 未来のバチャコンがあればタイマーを復元！
-                now = datetime.datetime.now(JST)
-                for msg_id_str, v_data in vcons_data.items():
-                    start_dt = datetime.datetime.fromisoformat(v_data["start_time"])
-                    channel_id = v_data["channel_id"]
-                    msg_id = int(msg_id_str)
+                # 【追加】ファイルとして保存されたデータを読み込む
+                if msg.attachments and msg.attachments[0].filename.endswith(".json"):
+                    json_bytes = await msg.attachments[0].read()
+                    json_str = json_bytes.decode('utf-8')
+                # 過去の互換性（テキストで保存されていた場合）
+                elif "```json" in msg.content:
+                    json_str = msg.content.split("```json")[1].split("```")[0].strip()
+                
+                if json_str:
+                    data = json.loads(json_str)
+                    users_data = data.get("users", {})
+                    history_data = data.get("history", [])
+                    vcons_data = data.get("vcons", {})
+                    data_message_id = msg.id
+                    print("Discordチャンネルからデータを復元したにゃ！")
                     
-                    if msg_id not in vcon_sessions:
-                        vcon_sessions[msg_id] = set(v_data.get("participants", []))
-                    
-                    if start_dt > now:
-                        # まだ開始前なら決定タイマー等を復元
-                        run_time = start_dt - datetime.timedelta(minutes=90)
-                        if run_time > now:
-                            scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
-                        elif start_dt > now:
-                            # 90分前は過ぎているが開始前の場合、2分後に決定
-                            scheduler.add_job(decide_vcontest, 'date', run_date=now+datetime.timedelta(minutes=2), args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
-                return
+                    # 未来のバチャコンがあればタイマーを復元！
+                    now = datetime.datetime.now(JST)
+                    for msg_id_str, v_data in vcons_data.items():
+                        start_dt = datetime.datetime.fromisoformat(v_data["start_time"])
+                        channel_id = v_data["channel_id"]
+                        msg_id = int(msg_id_str)
+                        
+                        if msg_id not in vcon_sessions:
+                            vcon_sessions[msg_id] = set(v_data.get("participants", []))
+                        
+                        if start_dt > now:
+                            # まだ開始前なら決定タイマー等を復元
+                            run_time = start_dt - datetime.timedelta(minutes=90)
+                            if run_time > now:
+                                scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
+                            elif start_dt > now:
+                                # 90分前は過ぎているが開始前の場合、2分後に決定
+                                scheduler.add_job(decide_vcontest, 'date', run_date=now+datetime.timedelta(minutes=2), args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
+                    return
             except Exception as e: 
                 print(f"データパースエラー: {e}")
 
     await save_data_to_channel(bot)
-
 async def save_data_to_channel(bot):
     global data_message_id
     if DATA_CHANNEL_ID == 0: return
@@ -92,16 +102,20 @@ async def save_data_to_channel(bot):
 
     data = {"users": users_data, "history": history_data, "vcons": vcons_data}
     json_str = json.dumps(data, indent=2, ensure_ascii=False)
-    content = f"```json\n{json_str}\n```"
+    
+    # 【変更】Discordの2000文字制限を回避するため、ファイルとして添付する
+    file = discord.File(io.BytesIO(json_str.encode('utf-8')), filename="data.json")
+    content_text = "📁 データ保存用（2000文字制限回避のためファイル化）"
 
     if data_message_id:
         try:
             msg = await channel.fetch_message(data_message_id)
-            await msg.edit(content=content)
+            # 古い長いテキストを消し、添付ファイルとして上書きする
+            await msg.edit(content=content_text, attachments=[file])
             return
         except discord.NotFound: pass
 
-    msg = await channel.send(content)
+    msg = await channel.send(content=content_text, file=file)
     data_message_id = msg.id
 
 # ==========================================
