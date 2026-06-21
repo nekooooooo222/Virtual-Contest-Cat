@@ -349,6 +349,7 @@ def trigger_live_standings(channel_id, message_id, cid, start_dt):
     bot.loop.create_task(live_standings_loop(channel_id, message_id, cid, start_dt))
 
 async def live_standings_loop(channel_id, message_id, cid, start_dt):
+    import traceback # エラー解析用に追加
     channel = bot.get_channel(channel_id)
     if channel: await channel.send(f"🟢 **{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL: https://atcoder-vcon-bot-xxxx.onrender.com/")
 
@@ -360,142 +361,155 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt):
 
     try:
         s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
-        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
         standings = s_res.json()
+        tasks = [t["Assignment"] for t in standings.get("TaskInfo", [])] 
+    except Exception as e:
+        if channel: await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...(`{e}`)")
+        return
+
+    try:
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
         results = r_res.json()
-        tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
     except:
-        return print("ライブ順位表: 本番データ取得失敗")
+        results = []
 
     user_ratings = {}
     
     # 100分間ループ
     while datetime.datetime.now(JST) < end_dt:
-        # その時点での参加者を再取得（遅刻参加対応！）
-        discord_ids = list(vcon_sessions.get(message_id, set()))
-        interval = max(10, len(discord_ids) * 1)
+        try: # 👑 ループ全体をエラー監視！
+            discord_ids = list(vcon_sessions.get(message_id, set()))
+            interval = max(10, len(discord_ids) * 1)
 
-        ranking_data = []
-        all_subs_data = []
+            ranking_data = []
+            all_subs_data = []
 
-        for d_id in discord_ids:
-            user = users_data.get(d_id)
-            if not user: continue
-            
-            if user not in user_ratings:
+            for d_id in discord_ids:
+                user = users_data.get(d_id)
+                if not user: continue
+                
+                if user not in user_ratings:
+                    try:
+                        h_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/users/{user}/history/json", headers=headers, cookies=cookies, timeout=10)
+                        if h_res.status_code == 200 and h_res.json(): user_ratings[user] = h_res.json()[-1].get("NewRating", 0)
+                        else: user_ratings[user] = 0
+                    except: user_ratings[user] = 0
+
+                subs = []
+                url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
+                await asyncio.sleep(1.0)
                 try:
-                    h_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/users/{user}/history/json", headers=headers, cookies=cookies, timeout=10)
-                    if h_res.status_code == 200 and h_res.json(): user_ratings[user] = h_res.json()[-1].get("NewRating", 0)
-                    else: user_ratings[user] = 0
-                except: user_ratings[user] = 0
-
-            subs = []
-            url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
-            await asyncio.sleep(1.0)
-            try:
-                res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies)
-                soup = BeautifulSoup(res.text, 'html.parser')
-                rows = soup.select('table tbody tr')
-                if rows:
-                    for row in rows:
-                        cells = row.find_all('td')
-                        if len(cells) < 8: continue
-                        time_tag = cells[0].find('time')
-                        if not time_tag: continue
-                        sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
-                        
-                        if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
-                            task_link = cells[1].find('a')
-                            task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
-                            score_text = cells[4].text.strip()
-                            score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
-                            result_label = cells[6].find('span')
-                            result = result_label.text.strip() if result_label else "WJ"
-                            sub_id = row.get('data-id') or str(sub_epoch) # 簡易ID
+                    res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies, timeout=10)
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    rows = soup.select('table tbody tr')
+                    if rows:
+                        for row in rows:
+                            cells = row.find_all('td')
+                            if len(cells) < 8: continue
+                            time_tag = cells[0].find('time')
+                            if not time_tag: continue
+                            sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
                             
-                            subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score, "id": sub_id})
-                            all_subs_data.append({
-                                "id": f"{user}_{sub_id}", "user": user, "user_rate": user_ratings[user],
-                                "prob": task_idx, "prob_title": f"Problem {task_idx}", "time": sub_epoch - start_epoch,
-                                "point": score, "result": result, "epoch": sub_epoch
-                            })
-            except: pass
+                            if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
+                                task_link = cells[1].find('a')
+                                task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
+                                score_text = cells[4].text.strip()
+                                score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                                result_label = cells[6].find('span')
+                                result = result_label.text.strip() if result_label else "WJ"
+                                sub_id = row.get('data-id') or str(sub_epoch) # 簡易ID
+                                
+                                subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score, "id": sub_id})
+                                all_subs_data.append({
+                                    "id": f"{user}_{sub_id}", "user": user, "user_rate": user_ratings[user],
+                                    "prob": task_idx, "prob_title": f"Problem {task_idx}", "time": sub_epoch - start_epoch,
+                                    "point": score, "result": result, "epoch": sub_epoch
+                                })
+                except Exception as e:
+                    print(f"提出取得エラー: {e}")
 
-            subs.sort(key=lambda x: x["epoch_second"])
-            
-            problem_status = {}
-            total_score = last_ac_time = total_penalties = 0
-
-            for sub in subs:
-                task_idx = sub["problem_id"]
-                if task_idx not in problem_status: problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
-                p_data = problem_status[task_idx]
-                if p_data['ac_time'] != -1: continue 
+                subs.sort(key=lambda x: x["epoch_second"])
                 
-                if sub["result"] == "AC":
-                    elapsed_sec = sub["epoch_second"] - start_epoch
-                    p_data['ac_time'] = elapsed_sec
-                    p_data['point'] = sub["point"]
-                    total_score += sub["point"]
-                    last_ac_time = max(last_ac_time, elapsed_sec)
-                    total_penalties += p_data['penalties']
-                elif sub["result"] not in ["CE", "IE", "WJ", "WR"]:
-                    p_data['penalties'] += 1
+                problem_status = {}
+                total_score = last_ac_time = total_penalties = 0
 
-            elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
-            
-            v_rank = 1
-            for s in standings["StandingsData"]:
-                s_score = s["TotalResult"]["Score"] / 100
-                s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
-                if s_score > total_score: v_rank += 1
-                elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
+                for sub in subs:
+                    task_idx = sub["problem_id"]
+                    if task_idx not in problem_status: problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
+                    p_data = problem_status[task_idx]
+                    if p_data['ac_time'] != -1: continue 
+                    
+                    if sub["result"] == "AC":
+                        elapsed_sec = sub["epoch_second"] - start_epoch
+                        p_data['ac_time'] = elapsed_sec
+                        p_data['point'] = sub["point"]
+                        total_score += sub["point"]
+                        last_ac_time = max(last_ac_time, elapsed_sec)
+                        total_penalties += p_data['penalties']
+                    elif sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                        p_data['penalties'] += 1
+
+                elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
                 
-            perf = "-"
-            for r in results:
-                if r.get("Rank") == v_rank or r.get("Place") == v_rank:
-                    perf = r.get("Performance", "-")
-                    break
+                v_rank = 1
+                for s in standings.get("StandingsData", []):
+                    s_score = s["TotalResult"]["Score"] / 100
+                    s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
+                    if s_score > total_score: v_rank += 1
+                    elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
+                    
+                perf = "-"
+                for r in results:
+                    if r.get("Rank") == v_rank or r.get("Place") == v_rank:
+                        perf = r.get("Performance", "-")
+                        break
 
-            member = bot.get_guild(channel.guild.id).get_member(int(d_id)) if channel else None
-            display_name = member.display_name if member else user
+                # 👑 ここを安全な書き方に修正！
+                member = channel.guild.get_member(int(d_id)) if channel and hasattr(channel, 'guild') else None
+                display_name = member.display_name if member else user
 
-            ranking_data.append({
-                "id": user, "display": display_name, "score": int(total_score), "time": elapsed_penalty_sec,
-                "v_rank": v_rank, "perf": perf, "old_rate": user_ratings[user], "rate": user_ratings[user], # レート計算は省略
-                "status": problem_status, "penalties": total_penalties
-            })
+                ranking_data.append({
+                    "id": user, "display": display_name, "score": int(total_score), "time": elapsed_penalty_sec,
+                    "v_rank": v_rank, "perf": perf, "old_rate": user_ratings[user], "rate": user_ratings[user], 
+                    "status": problem_status, "penalties": total_penalties
+                })
 
-        # レート計算
-        for data in ranking_data:
-            try:
-                perf_int = int(data["perf"])
-                if data["old_rate"] > 0:
-                    x_new = (2.0 ** (data["old_rate"] / 400.0)) * 0.9 + (2.0 ** (perf_int / 400.0)) * 0.1
-                    data["rate"] = int(round(400.0 * math.log2(x_new)))
-            except: pass
+            # レート計算
+            for data in ranking_data:
+                try:
+                    perf_int = int(data["perf"])
+                    if data["old_rate"] > 0:
+                        x_new = (2.0 ** (data["old_rate"] / 400.0)) * 0.9 + (2.0 ** (perf_int / 400.0)) * 0.1
+                        data["rate"] = int(round(400.0 * math.log2(x_new)))
+                except: pass
 
-        all_subs_data.sort(key=lambda x: x["epoch"])
-        
-        # 🌐 Web側にデータを送信！
-        now_dt = datetime.datetime.now(JST)
-        elapsed_sec = int((now_dt - start_dt).total_seconds())
-        ws_data = {
-            "type": "update", "status": "running", "elapsed": elapsed_sec, "total": 100 * 60,
-            "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, "blink_user": None
-        }
-        
-        for ws in list(connected_clients):
-            try: await ws.send_json(ws_data)
-            except: connected_clients.remove(ws)
-        
-        await asyncio.sleep(interval)
+            all_subs_data.sort(key=lambda x: x["epoch"])
+            
+            # 🌐 Web側にデータを送信
+            now_dt = datetime.datetime.now(JST)
+            elapsed_sec = int((now_dt - start_dt).total_seconds())
+            ws_data = {
+                "type": "update", "status": "running", "elapsed": elapsed_sec, "total": 100 * 60,
+                "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, "blink_user": None
+            }
+            
+            for ws in list(connected_clients):
+                try: await ws.send_json(ws_data)
+                except Exception: connected_clients.remove(ws)
+            
+            await asyncio.sleep(interval)
+            
+        # 👑 致命的なエラーが起きたらDiscordに通知して、10秒後にリトライする！
+        except Exception as e:
+            err_msg = traceback.format_exc()
+            print(f"内部エラー発生: {err_msg}")
+            if channel: await channel.send(f"⚠️ 順位表の更新中にエラーが起きたにゃ！\n```py\n{e}\n```\n`10秒後に再試行するにゃ...`")
+            await asyncio.sleep(10)
 
     # 終了シグナルをWebに送信
     for ws in list(connected_clients):
         try: await ws.send_json({"type": "update", "status": "finished", "elapsed": 6000, "total": 6000, "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data})
         except: pass
-
 
 # ==========================================
 # 🏁 最終結果：自動集計・パフォ＆レート計算
