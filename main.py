@@ -26,9 +26,11 @@ history_data = []
 vcons_data = {} # 予約されたバチャコンのデータ保存用
 data_message_id = None 
 
-scheduler = AsyncIOScheduler()
+
 vcon_sessions = {} # message_id -> set(user_id)
 JST = timezone(timedelta(hours=9))
+scheduler = AsyncIOScheduler(timezone=JST)
+
 
 # WebSocketで接続しているブラウザのリスト
 connected_clients = set()
@@ -336,8 +338,8 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     )
 
     # ライブ順位表タスクを開始時刻に予約
-    scheduler.add_job(trigger_live_standings, 'date', run_date=start_dt, args=[channel_id, message_id, chosen_cid, start_dt])
-
+    # ライブ順位表タスクを開始時刻に予約
+    scheduler.add_job(live_standings_loop, 'date', run_date=start_dt, args=[channel_id, message_id, chosen_cid, start_dt])
     # 最終結果発表を終了1分後(101分後)に予約
     end_time = start_dt + datetime.timedelta(minutes=101)
     scheduler.add_job(aggregate_vcontest, 'date', run_date=end_time, args=[channel_id, message_id, chosen_cid, start_dt])
