@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バチャコン ライブオーバーレイ</title>
+    <!-- 画像化するためのライブラリを読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #777; }
+
+        body { background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 10px; display: flex; flex-direction: column; gap: 10px; height: 100vh; box-sizing: border-box; font-size: 9px; overflow: hidden; }
+        .main-container { display: flex; flex-direction: row; gap: 0; flex-grow: 1; overflow: hidden; }
+        
+        /* 👑 PCとスマホで幅の設定を完全に分岐！狭いときは幅100%を有効活用 */
+        @media (min-width: 901px) {
+            .main-container { flex-direction: row; }
+            .score-panel { width: 60%; flex-shrink: 0; border-right: 1px solid #555; padding-right: 10px; }
+            .sub-panel { width: 40%; flex-shrink: 0; padding-left: 10px; }
+        }
+        @media (max-width: 900px) {
+            .main-container { flex-direction: column; overflow-y: auto; }
+            /* スマホ時は高さを50%ずつに均等分割し、横幅を100%フル活用！ */
+            .score-panel { width: 100%; flex: 1 1 50%; min-height: 250px; border-right: none !important; border-bottom: 1px solid #555; padding-right: 0 !important; padding-bottom: 10px; margin-bottom: 10px; }
+            .sub-panel { width: 100%; flex: 1 1 50%; min-height: 250px; padding-left: 0 !important; }
+        }
+        
+        .panel { background-color: transparent; display: flex; flex-direction: column; overflow: hidden; resize: vertical; min-height: 0; }
+        
+        .panel-header { background-color: transparent; padding: 4px 8px; font-weight: bold; font-size: 1.4em; border-bottom: 1px solid #555; display: flex; justify-content: space-between; align-items: center; }
+        .header-title-wrap { display: flex; align-items: baseline; }
+        .header-actions { display: flex; gap: 5px; } 
+
+        .neon-cyan { color: #0ff; text-shadow: 0 0 2px #0ff, 0 0 6px #0ff; letter-spacing: 1px; }
+        .neon-yellow { color: #ffea00; text-shadow: 0 0 2px #ffea00, 0 0 6px #ffea00; font-size: 0.75em; margin-left: 15px; font-variant-numeric: tabular-nums; }
+
+        .popout-btn { background: transparent; border: none; color: #aaa; cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: background 0.2s, color 0.2s; }
+        .popout-btn:hover { background: #444; color: #fff; }
+
+        .table-container { flex-grow: 1; overflow-x: auto; overflow-y: auto; padding: 4px; position: relative; min-height: 0; }
+        .score-list-wrapper { min-width: 600px; }
+        .sub-list-wrapper { min-width: 350px; } 
+
+        .header-row { padding: 6px 6px; border-bottom: 2px solid #555; font-weight: bold; color: #eeeeee; align-items: center; position: sticky; top: 0; background-color: #1e1e1e; z-index: 10; }
+        .list-container { position: relative; margin-top: 4px; }
+
+        /* 👑 ゼブラストライプ */
+        .row-item {
+            --row-bg: #2a2a2a; 
+            padding: 0 6px; height: 32px; background-color: var(--row-bg); border-radius: 4px; align-items: center; position: absolute; width: 100%; box-sizing: border-box; transition: transform 0.3s cubic-bezier(0.39, 0.575, 0.565, 1), opacity 0.3s ease;
+        }
+        .row-odd {
+            --row-bg: #222222; 
+        }
+
+        .pen-text { color: #ff4d4d; font-size: 0.85em; font-weight: bold; } 
+        .vrank-text { color: #aaa; font-size: 0.8em; font-weight: normal; }
+        .time-text { font-size: 0.85em; color: #bbb; } 
+        .score-text { font-weight: bold; font-size: 1.1em; color: #ffcc00; } 
+        .prob-cell { line-height: 1.1; } 
+        .sub-row, .sub-header-row { display: grid; grid-template-columns: 1.8fr 1.5fr 1fr 1fr 1fr; }
+        
+        .badge { padding: 2px 4px; border-radius: 3px; font-weight: bold; text-align: center; width: fit-content; color: white; transition: background-color 0.3s; font-size: 0.95em; }
+        .badge.ac { background-color: #5cb85c; }
+        .badge.wa, .badge.tle, .badge.re, .badge.mle, .badge.ce { background-color: #f0ad4e; }
+        .badge.wj { background-color: #777777; }
+        .badge.wj-progress { background-color: #f0ad4e; color: #fff; }
+        .prob-ac { color: #5cb85c; font-weight: bold; }
+        .prob-none { color: #777; }
+
+        @keyframes cyan-blink { 
+            0% { background-color: var(--row-bg); } 
+            12.5% { background-color: rgba(0, 255, 255, 0.3); } 
+            50% { background-color: rgba(0, 255, 255, 0.8); } 
+            87.5% { background-color: rgba(0, 255, 255, 0.1); } 
+            100% { background-color: var(--row-bg); } 
+        }
+        .blink { animation: cyan-blink 0.8s 5; }
+    </style>
+</head>
+<body>
+
+    <div class="main-container">
+        <!-- 順位表パネル -->
+        <div class="panel score-panel" id="scorePanel">
+            <div class="panel-header">
+                <div class="header-title-wrap">
+                    <span class="neon-cyan">Standings</span>
+                    <span class="neon-yellow" id="timerDisplay">待機中...</span>
+                </div>
+                <div class="header-actions">
+                    <button class="popout-btn" onclick="downloadImage('scorePanel', 'Standings')" title="画像としてダウンロード">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    </button>
+                    <button class="popout-btn" onclick="openPopout('score')" title="ポップアウト">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="table-container">
+                <div class="score-list-wrapper">
+                    <div class="header-row" id="scoreHeaderRow" style="display: grid;"></div>
+                    <div class="list-container" id="scoreList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提出一覧パネル -->
+        <div class="panel sub-panel" id="subPanel">
+            <div class="panel-header">
+                <span class="neon-cyan">Submissions</span>
+                <div class="header-actions">
+                    <button class="popout-btn" onclick="downloadImage('subPanel', 'Submissions')" title="画像としてダウンロード">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    </button>
+                    <button class="popout-btn" onclick="openPopout('sub')" title="ポップアウト">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="table-container">
+                <div class="sub-list-wrapper">
+                    <div class="header-row sub-header-row">
+                        <div>User</div>
+                        <div>Problem</div>
+                        <div>Time</div>
+                        <div>Score</div>
+                        <div>Result</div>
+                    </div>
+                    <div class="list-container" id="subList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // UI制御（ポップアウト ＆ ダウンロード）
+        // ==========================================
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const viewMode = params.get('view');
+            if (viewMode === 'score') {
+                document.getElementById('subPanel').style.display = 'none';
+                document.getElementById('scorePanel').style.borderRight = 'none'; 
+            } else if (viewMode === 'sub') {
+                document.getElementById('scorePanel').style.display = 'none';
+                document.getElementById('subPanel').style.paddingLeft = '0';
+            }
+        });
+
+        function openPopout(type) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('view', type);
+            window.open(url.href, type + 'Window', `width=${type==='score'?800:400},height=600,menubar=no,toolbar=no,location=no,status=no`);
+        }
+
+        function downloadImage(panelId, prefix) {
+            const targetElement = document.getElementById(panelId);
+            html2canvas(targetElement, { backgroundColor: '#1e1e1e', scale: 2 }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = `${prefix}_VCon_${new Date().getTime()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+        }
+
+        // ==========================================
+        // 共通設定・ユーティリティ
+        // ==========================================
+        const ROW_HEIGHT = 34; 
+        const getRatingColor = rate => rate < 400 ? '#999999' : rate < 800 ? '#cc7000' : rate < 1200 ? '#00cc00' : rate < 1600 ? '#00cccc' : rate < 2000 ? '#4444ff' : rate < 2400 ? '#cccc00' : rate < 2800 ? '#ff9900' : '#ff0000';
+        const getProblemStyle = p => p==='A' ? 'color:#ff4d4d;' : p==='B' ? 'color:#4d4dff;' : p==='C' ? 'color:#ffcc00;' : p==='D' ? 'color:#00cc00;' : p==='E' ? 'color:#00cccc;' : p==='F' ? 'color:#aa00aa;' : p==='G' ? 'color:#ff9900;' : 'background:linear-gradient(to bottom, #ff99cc, #33ccff); -webkit-background-clip:text; -webkit-text-fill-color:transparent;';
+        const formatTime = s => (s === undefined || s === null) ? '-' : `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+
+        // ==========================================
+        // WebSocket連携処理
+        // ==========================================
+        /* WEBSOCKET_INJECTION_POINT */
+        if (typeof WS_URL === 'undefined') {
+            // main.py によって置換されなかった場合の自動フォールバック
+            var WS_URL = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/ws";
+        }
+
+        const timerDisplay = document.getElementById('timerDisplay');
+        const scoreList = document.getElementById('scoreList');
+        const scoreHeaderRow = document.getElementById('scoreHeaderRow');
+        const subList = document.getElementById('subList');
+
+        let activeProblems = [];
+        let gridTemplateColumns = "";
+        let standingElements = {};
+        let submissionElements = {};
+
+        function connectWebSocket() {
+            const ws = new WebSocket(WS_URL);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if(data.type === 'update') {
+                    // 1. タイマー更新
+                    if(data.status === 'finished') {
+                        timerDisplay.innerHTML = "🏁 終了！ 最終結果";
+                        timerDisplay.style.color = "#5cb85c";
+                        timerDisplay.style.textShadow = "0 0 2px #5cb85c, 0 0 6px #5cb85c";
+                    } else {
+                        const remain = Math.max(0, data.total - data.elapsed);
+                        timerDisplay.innerHTML = `経過: ${formatTime(data.elapsed)}&emsp;&emsp;残り: ${formatTime(remain)}`;
+                    }
+
+                    // 2. ヘッダー（問題数）の初期化・動的更新
+                    if(activeProblems.join('') !== data.tasks.join('')) {
+                        activeProblems = data.tasks;
+                        gridTemplateColumns = `1.2fr 1.5fr 0.9fr 1fr repeat(${activeProblems.length}, 0.7fr) 0.9fr 1.5fr`;
+                        scoreHeaderRow.style.gridTemplateColumns = gridTemplateColumns;
+                        let headerHTML = `<div>Rank</div><div>User</div><div>Time</div><div>Score</div>`;
+                        activeProblems.forEach(p => {
+                            headerHTML += `<div style="${getProblemStyle(p)} font-weight:bold;">${p}</div>`;
+                        });
+                        headerHTML += `<div>Perf</div><div>Rate</div>`;
+                        scoreHeaderRow.innerHTML = headerHTML;
+                    }
+
+                    // 3. 順位表の更新
+                    updateStandings(data.standings, data.blink_user);
+                    // 4. 提出一覧の更新
+                    updateSubmissions(data.submissions);
+                }
+            };
+            ws.onclose = () => { setTimeout(connectWebSocket, 3000); };
+        }
+        connectWebSocket();
+
+        // ==========================================
+        // 描画関数 (Score / Submissions)
+        // ==========================================
+        function updateStandings(standingsData, blinkUserId) {
+            standingsData.forEach((user, index) => {
+                let el = standingElements[user.id];
+                if (!el) {
+                    el = document.createElement('div');
+                    el.className = 'row-item score-row';
+                    el.style.display = 'grid';
+                    scoreList.appendChild(el);
+                    standingElements[user.id] = el;
+                }
+                el.style.gridTemplateColumns = gridTemplateColumns;
+
+                // 👑 奇数行のゼブラストライプ
+                if (index % 2 === 0) el.classList.add('row-odd');
+                else el.classList.remove('row-odd');
+
+                const penText = user.penalties > 0 ? `<span class="pen-text">(${user.penalties})</span>` : '';
+                let probsHTML = '';
+                activeProblems.forEach(p => {
+                    const pd = user.status[p];
+                    if (pd && pd.ac_time !== -1) {
+                        const p_penText = pd.penalties > 0 ? `<span class="pen-text">(${pd.penalties})</span>` : '';
+                        probsHTML += `<div class="prob-cell"><span class="prob-ac">${pd.point}</span>${p_penText}<br><span class="time-text">${formatTime(pd.ac_time)}</span></div>`;
+                    } else { probsHTML += `<div><span class="prob-none">-</span></div>`; }
+                });
+
+                const perfColor = getRatingColor(user.perf);
+                const oldRateColor = getRatingColor(user.old_rate);
+                const newRateColor = getRatingColor(user.rate);
+                const diff = user.rate - user.old_rate;
+                const sign = diff >= 0 ? '+' : '';
+                const rateDiffStr = diff !== 0 ? ` <span style="font-size: 0.85em; color: #aaa;">(${sign}${diff})</span>` : '';
+
+                el.innerHTML = `
+                    <div style="font-weight: bold; font-size: 1.1em;">${index + 1}<br><span class="vrank-text">(${user.v_rank})</span></div>
+                    <div style="font-weight: bold; font-size: 1.1em; color: ${oldRateColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${user.display}</div>
+                    <div class="prob-cell">${formatTime(user.time)}<br>${penText}</div>
+                    <div class="score-text">${user.score}</div>
+                    ${probsHTML}
+                    <div style="color: ${perfColor}; font-weight: bold; font-size: 1.1em;">${user.perf}</div>
+                    <div style="font-weight: bold; font-size: 1.1em; white-space: nowrap;">
+                        <span style="color: ${oldRateColor};">${user.old_rate}</span> <span style="color: #aaa;">&rarr;</span> <span style="color: ${newRateColor};">${user.rate}</span>${rateDiffStr}
+                    </div>
+                `;
+                el.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
+
+                if (user.id === blinkUserId) {
+                    el.classList.remove('blink'); void el.offsetWidth; el.classList.add('blink');
+                }
+            });
+            scoreList.style.height = `${standingsData.length * ROW_HEIGHT}px`;
+        }
+
+        function updateSubmissions(subsData) {
+            // 新しい順（逆順）にして上から追加していく
+            subsData.slice().reverse().forEach((sub, index) => {
+                let el = submissionElements[sub.id];
+                if (!el) {
+                    el = document.createElement('div');
+                    el.className = 'row-item sub-row blink new-entry';
+                    el.id = `sub-${sub.id}`;
+                    subList.appendChild(el);
+                    submissionElements[sub.id] = el;
+                    
+                    el.style.transform = `translateY(${3 * ROW_HEIGHT}px)`;
+                    el.style.opacity = '0';
+                    el.offsetHeight; 
+                    setTimeout(() => el.classList.remove('new-entry'), 300);
+                }
+
+                // 👑 奇数行のゼブラストライプ
+                if (index % 2 === 0) el.classList.add('row-odd');
+                else el.classList.remove('row-odd');
+
+                const userColor = getRatingColor(sub.user_rate);
+                const probStyle = getProblemStyle(sub.prob);
+                let resClass = 'wj';
+                if(sub.result === 'AC') resClass = 'ac';
+                else if(['WA','TLE','RE','MLE','CE'].includes(sub.result)) resClass = sub.result.toLowerCase();
+                else if(sub.result.includes('/')) resClass = 'wj-progress';
+
+                el.innerHTML = `
+                    <div style="font-weight: bold; color: ${userColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${sub.user}</div>
+                    <div style="${probStyle} font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${sub.prob_title}</div>
+                    <div>${formatTime(sub.time)}</div>
+                    <div class="score-text" style="font-size: 1em;">${sub.point}</div>
+                    <div><span class="badge ${resClass}">${sub.result}</span></div>
+                `;
+                el.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
+                el.style.opacity = '1';
+            });
+            subList.style.height = `${subsData.length * ROW_HEIGHT}px`;
+        }
+    </script>
+</body>
+</html>
