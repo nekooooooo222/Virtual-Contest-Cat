@@ -304,7 +304,7 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
         f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
         f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n"
         f"**ライブ順位表はここにゃ:** https://atcoder-vcon-bot-xxxx.onrender.com/\n"
-        //f"*(※遅れて参加ボタンを押しても順位表に反映されるにゃ！)*"
+        #f"*(※遅れて参加ボタンを押しても順位表に反映されるにゃ！)*"
     )
 
     # ライブ順位表タスクを開始時刻に予約
