@@ -186,6 +186,34 @@ async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id
     except Exception as e: log_text += f"Error: {e}\n"
     await interaction.followup.send(log_text)
 
+@bot.tree.command(name="test_api", description="順位表とパフォのAPIが取れるかテストするにゃ")
+@app_commands.describe(contest_id="コンテストID (例: abc158)")
+async def test_api(interaction: discord.Interaction, contest_id: str):
+    await interaction.response.defer()
+    log_text = f"🔍 **API取得テスト ({contest_id.upper()})**\n\n"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
+
+    # 1. standings/json (順位表)
+    try:
+        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/standings/json", headers=headers, cookies=cookies, timeout=10)
+        log_text += f"**[1. standings/json (順位表)]**\nHTTP Status: {s_res.status_code}\n"
+        s_data = s_res.json()
+        log_text += f"✅ JSON変換成功！ (Task数: {len(s_data.get('TaskInfo', []))})\n\n"
+    except Exception as e: 
+        log_text += f"❌ エラー: `{type(e).__name__}` ({e})\n\n"
+
+    # 2. results/json (パフォーマンス用)
+    try:
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/results/json", headers=headers, cookies=cookies, timeout=10)
+        log_text += f"**[2. results/json (パフォ用)]**\nHTTP Status: {r_res.status_code}\n"
+        r_data = r_res.json()
+        log_text += f"✅ JSON変換成功！ (データ数: {len(r_data)})\n\n"
+    except Exception as e: 
+        log_text += f"❌ エラー: `{type(e).__name__}` ({e})\n\n"
+
+    await interaction.followup.send(log_text)
+
 # 👑 【NEW】オプション追加版 vcontest
 @bot.tree.command(name="vcontest", description="バチャコンの募集を開始するにゃ")
 @app_commands.describe(
