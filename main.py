@@ -8,10 +8,10 @@ from datetime import timezone, timedelta
 import requests
 import random
 import asyncio
+import math
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from bs4 import BeautifulSoup
+from aiohttp import web
 
 # ==========================================
 # 設定とデータベース
@@ -19,17 +19,25 @@ from bs4 import BeautifulSoup
 TOKEN = os.getenv("DISCORD_TOKEN") 
 DATA_CHANNEL_ID = int(os.getenv("DATA_CHANNEL_ID", 0))
 REVEL_SESSION = os.getenv("REVEL_SESSION")
+PORT = int(os.environ.get("PORT", 8080))
 
 users_data = {}
 history_data = []
+vcons_data = {} # 予約されたバチャコンのデータ保存用
 data_message_id = None 
 
 scheduler = AsyncIOScheduler()
-vcon_sessions = {}
+vcon_sessions = {} # message_id -> set(user_id)
 JST = timezone(timedelta(hours=9))
 
+# WebSocketで接続しているブラウザのリスト
+connected_clients = set()
+
+# ==========================================
+# データ保存・復元処理
+# ==========================================
 async def load_data_from_channel(bot):
-    global users_data, history_data, data_message_id
+    global users_data, history_data, vcons_data, data_message_id
     if DATA_CHANNEL_ID == 0: return
     channel = bot.get_channel(DATA_CHANNEL_ID)
     if not channel: return
@@ -41,8 +49,28 @@ async def load_data_from_channel(bot):
                 data = json.loads(json_str)
                 users_data = data.get("users", {})
                 history_data = data.get("history", [])
+                vcons_data = data.get("vcons", {})
                 data_message_id = msg.id
                 print("Discordチャンネルからデータを復元したにゃ！")
+                
+                # 未来のバチャコンがあればタイマーを復元！
+                now = datetime.datetime.now(JST)
+                for msg_id_str, v_data in vcons_data.items():
+                    start_dt = datetime.datetime.fromisoformat(v_data["start_time"])
+                    channel_id = v_data["channel_id"]
+                    msg_id = int(msg_id_str)
+                    
+                    if msg_id not in vcon_sessions:
+                        vcon_sessions[msg_id] = set(v_data.get("participants", []))
+                    
+                    if start_dt > now:
+                        # まだ開始前なら決定タイマー等を復元
+                        run_time = start_dt - datetime.timedelta(minutes=90)
+                        if run_time > now:
+                            scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
+                        elif start_dt > now:
+                            # 90分前は過ぎているが開始前の場合、2分後に決定
+                            scheduler.add_job(decide_vcontest, 'date', run_date=now+datetime.timedelta(minutes=2), args=[channel_id, msg_id, start_dt, v_data.get("contest_id")])
                 return
             except Exception as e: 
                 print(f"データパースエラー: {e}")
@@ -55,7 +83,12 @@ async def save_data_to_channel(bot):
     channel = bot.get_channel(DATA_CHANNEL_ID)
     if not channel: return
 
-    data = {"users": users_data, "history": history_data}
+    # 参加者リストをセットからリストに変換して保存
+    for msg_id, participants in vcon_sessions.items():
+        if str(msg_id) in vcons_data:
+            vcons_data[str(msg_id)]["participants"] = list(participants)
+
+    data = {"users": users_data, "history": history_data, "vcons": vcons_data}
     json_str = json.dumps(data, indent=2, ensure_ascii=False)
     content = f"```json\n{json_str}\n```"
 
@@ -70,7 +103,7 @@ async def save_data_to_channel(bot):
     data_message_id = msg.id
 
 # ==========================================
-# UIコンポーネント
+# UIコンポーネント (遅刻参加対応)
 # ==========================================
 class VconJoinView(discord.ui.View):
     def __init__(self):
@@ -91,7 +124,9 @@ class VconJoinView(discord.ui.View):
             await interaction.response.send_message("参加をキャンセルしたにゃ", ephemeral=True)
         else:
             vcon_sessions[msg_id].add(user_id)
-            await interaction.response.send_message("参加登録したにゃ！開始まで待っておくにゃ～", ephemeral=True)
+            await interaction.response.send_message("参加登録したにゃ！", ephemeral=True)
+            
+        await save_data_to_channel(bot) # 状態を永続化
 
         participants_mentions = [f"<@{uid}>" for uid in vcon_sessions[msg_id]]
         join_text = " ".join(participants_mentions) if participants_mentions else "まだいないにゃ"
@@ -113,7 +148,7 @@ bot.setup_hook = setup_hook
 
 @bot.event
 async def on_ready():
-    print(f'ログインしました: {bot.user.name}')
+    print(f'ログインしましたにゃ: {bot.user.name}')
     await load_data_from_channel(bot)
     if not scheduler.running: scheduler.start()
     await bot.tree.sync()
@@ -129,16 +164,15 @@ async def register(interaction: discord.Interaction, atcoder_id: str):
 @app_commands.describe(contest_id="コンテストID", user_id="AtCoder ID")
 async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id: str):
     await interaction.response.defer() 
-    log_text = f" **Cookie突破テスト ({contest_id} / {user_id})**\n\n"
+    log_text = f"🔍 **Cookie突破テスト ({contest_id} / {user_id})**\n\n"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
     try:
         s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{contest_id}/standings/json", headers=headers, cookies=cookies, timeout=10)
         if s_res.status_code == 200:
-            log_text += f"**[1. 本家 standings/json]**\nStatus: 200\n✅ **成功！Cookie突破したにゃ！**\n\n"
-        else:
-            log_text += f"**[1. 本家 standings/json]**\nStatus: {s_res.status_code}\n\n"
+            log_text += f"**[1. 本家 standings/json]**\nStatus: 200\n **Cookie突破したにゃ！**\n\n"
+        else: log_text += f"**[1. 本家 standings/json]**\nStatus: {s_res.status_code}\n\n"
     except Exception as e: log_text += f"Error: {e}\n\n"
 
     try:
@@ -147,125 +181,306 @@ async def test_scrape(interaction: discord.Interaction, contest_id: str, user_id
         soup = BeautifulSoup(sub_res.text, 'html.parser')
         rows = soup.select('table tbody tr')
         log_text += f"**[2. 本家 提出スクレイピング]**\nStatus: {sub_res.status_code}\n"
-        if rows: log_text += f" **成功！提出一覧を取得できたにゃ！**\n"
+        if rows: log_text += f"提出一覧を取得できたにゃ！**\n"
         else: log_text += "取得した提出行数: 0\n"
     except Exception as e: log_text += f"Error: {e}\n"
     await interaction.followup.send(log_text)
 
+# 👑 【NEW】オプション追加版 vcontest
 @bot.tree.command(name="vcontest", description="バチャコンの募集を開始するにゃ")
-@app_commands.describe(start_time="開始日時 (例: 2026-06-18 21:00)")
-async def vcontest(interaction: discord.Interaction, start_time: str):
+@app_commands.describe(
+    start_time="開始日時 (例: 2026-06-18 21:00)",
+    contest_id="コンテスト回を固定する場合に入力するにゃ (例: abc250)",
+    comment="募集メッセージにコメントを添えるにゃ \nあなたのメッセージセンスが問われるにゃ～"
+)
+async def vcontest(interaction: discord.Interaction, start_time: str, contest_id: str = None, comment: str = None):
     try:
         dt = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M").replace(tzinfo=JST)
     except ValueError:
-        await interaction.response.send_message("日時のフォーマットが違うにゃ！", ephemeral=True)
-        return
+        return await interaction.response.send_message("日時のフォーマットが違うにゃ！ `2026-06-18 21:00` のように入力してにゃ", ephemeral=True)
     
     now = datetime.datetime.now(JST)
     run_time = dt - datetime.timedelta(minutes=90) 
     
     if run_time < now:
         if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=10)
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=2)
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
+    contest_text = f"👉 開催予定: **{contest_id.upper()}**\n" if contest_id else f"(*{run_time.strftime('%H:%M')} に、ねこが最適な回を自動決定するにゃ*)\n"
 
     base_text = (
         f"📢 **バチャコン募集！**\n"
-        f"開始時間: {dt.strftime('%Y-%m-%d %H:%M')}\n\n"
-        f"参加する人は下のボタンを押すんだにゃ！\n"
-        f"(*{run_time.strftime('%H:%M')} に、ねこが参加者の未プレイ問題から回を自動決定するにゃ*)"
+        f"{comment_text}"
+        f"開始時間: **{dt.strftime('%Y-%m-%d %H:%M')}**\n"
+        f"{contest_text}\n"
+        f"参加する人は下のボタンを押すんだにゃ！"
     )
 
     await interaction.response.send_message(f"{base_text}\n\n**【現在の参加者】**\nまだいないにゃ", view=VconJoinView())
     msg = await interaction.original_response()
+    
+    # 予約データを保存
     vcon_sessions[msg.id] = set()
+    vcons_data[str(msg.id)] = {
+        "channel_id": interaction.channel_id,
+        "start_time": dt.isoformat(),
+        "contest_id": contest_id.lower() if contest_id else None,
+        "participants": []
+    }
+    await save_data_to_channel(bot)
 
-    scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[interaction.channel_id, msg.id, dt])
+    # 決定処理の予約
+    scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[interaction.channel_id, msg.id, dt, contest_id])
 
 # ==========================================
-# 評価関数・コンテスト決定
+# コンテスト決定
 # ==========================================
-async def decide_vcontest(channel_id, message_id, start_dt):
+async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=None):
     channel = bot.get_channel(channel_id)
     if not channel: return
     
-    participants_discord_ids = list(vcon_sessions.get(message_id, set()))
-    if not participants_discord_ids: return await channel.send("参加者がいなかったので中止にゃ！")
+    chosen_cid = force_contest_id
 
-    atcoder_ids = [users_data[d_id] for d_id in participants_discord_ids]
-    status_msg = await channel.send(f"**コンテストの決定処理を開始するにゃ！**\n(参加者: {', '.join(atcoder_ids)})\n`データ取得中にゃ...`")
+    if not chosen_cid:
+        participants_discord_ids = list(vcon_sessions.get(message_id, set()))
+        if not participants_discord_ids:
+            return await channel.send("参加者がいなかったので、今回のバチャコンは自動中止になったにゃ！")
 
-    try: contests_data = (await asyncio.to_thread(requests.get, "https://kenkoooo.com/atcoder/resources/contests.json")).json()
-    except: return await channel.send("APIの取得に失敗したにゃ...")
+        atcoder_ids = [users_data[d_id] for d_id in participants_discord_ids]
+        status_msg = await channel.send(f"**コンテストの決定処理を開始するにゃ！**\n(参加者: {', '.join(atcoder_ids)})\n`データ取得中にゃ...`")
+
+        try: contests_data = (await asyncio.to_thread(requests.get, "https://kenkoooo.com/atcoder/resources/contests.json")).json()
+        except: return await channel.send("APIの取得に失敗したにゃ...")
+            
+        target_contests = set(c["id"] for c in contests_data if c["id"].startswith("abc") and int(c["id"][3:6]) >= 126 and c["id"] not in history_data)
+        if not target_contests: return await channel.send("対象となるコンテストがもうないにゃ！")
         
-    target_contests = set(c["id"] for c in contests_data if c["id"].startswith("abc") and int(c["id"][3:6]) >= 126 and c["id"] not in history_data)
-    if not target_contests: return await channel.send("対象となるコンテストがもうないにゃ！")
-    
-    user_ac_data = {} 
-    for i, user in enumerate(atcoder_ids):
-        await status_msg.edit(content=f"**コンテストの決定処理を開始するにゃ！**\n`データ取得中... ({i+1}/{len(atcoder_ids)}人完了)`")
-        user_ac_data[user] = {}
-        try:
-            url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}"
-            await asyncio.sleep(1.0) 
-            subs = (await asyncio.to_thread(requests.get, url)).json()
-            for sub in subs:
-                if sub["result"] == "AC" and sub["contest_id"] in target_contests:
-                    user_ac_data[user].setdefault(sub["contest_id"], set()).add(sub["problem_id"].split("_")[-1])
-        except: pass
+        user_ac_data = {} 
+        for i, user in enumerate(atcoder_ids):
+            await status_msg.edit(content=f"**コンテストの決定処理を開始するにゃ！**\n`データ取得中にゃ... ({i+1}/{len(atcoder_ids)}人完了)`")
+            user_ac_data[user] = {}
+            try:
+                url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}"
+                await asyncio.sleep(1.0) 
+                subs = (await asyncio.to_thread(requests.get, url)).json()
+                for sub in subs:
+                    if sub["result"] == "AC" and sub["contest_id"] in target_contests:
+                        user_ac_data[user].setdefault(sub["contest_id"], set()).add(sub["problem_id"].split("_")[-1])
+            except: pass
 
-    await status_msg.edit(content=f" `全員のデータを取得完了！最適な回を計算中にゃ～`")
+        await status_msg.edit(content=f" `全員のデータを取得したにゃ！最適な回を計算中にゃ～`")
 
-    valid_contests = [] 
-    for cid in target_contests:
-        is_6_prob = (126 <= int(cid[3:6]) <= 211)
-        exclude, total_score, score_4_over = False, 0, 0
-        for user in atcoder_ids:
-            ac_set = user_ac_data[user].get(cid, set())
-            if len(ac_set) >= 5 or any(len(idx)>1 or idx>='f' for idx in ac_set):
-                exclude = True; break
-            score = 0
-            if is_6_prob: score += 1.5 if 'd' in ac_set else 0; score += 4 if 'e' in ac_set else 0
-            else: score += 1 if 'd' in ac_set else 0; score += 3 if 'e' in ac_set else 0
-            total_score += score
-            if score >= 4: score_4_over += 1
-        if not exclude and (score_4_over / len(atcoder_ids)) < 0.35:
-            valid_contests.append((cid, total_score))
+        valid_contests = [] 
+        for cid in target_contests:
+            is_6_prob = (126 <= int(cid[3:6]) <= 211)
+            exclude, total_score, score_4_over = False, 0, 0
+            for user in atcoder_ids:
+                ac_set = user_ac_data[user].get(cid, set())
+                if len(ac_set) >= 5 or any(len(idx)>1 or idx>='f' for idx in ac_set):
+                    exclude = True; break
+                score = 0
+                if is_6_prob: score += 1.5 if 'd' in ac_set else 0; score += 4 if 'e' in ac_set else 0
+                else: score += 1 if 'd' in ac_set else 0; score += 3 if 'e' in ac_set else 0
+                total_score += score
+                if score >= 4: score_4_over += 1
+            if not exclude and (score_4_over / len(atcoder_ids)) < 0.35:
+                valid_contests.append((cid, total_score))
 
-    if not valid_contests: return await channel.send("対象となるコンテストがもうないにゃ！")
+        if not valid_contests: return await channel.send("ちょうどいい難易度の回が見つからなかったにゃ...")
 
-    valid_contests.sort(key=lambda x: x[1])
-    scores = [(cid, score + 1) for cid, score in valid_contests[:30]]
-    min_score_6 = scores[0][1] ** 6
-    weights = [min_score_6 / (s ** 6) for _, s in scores]
-    chosen_cid = random.choices([c for c, _ in scores], weights=weights, k=1)[0]
-    
-    history_data.append(chosen_cid)
-    await save_data_to_channel(bot)
-    
-    await status_msg.delete()
+        valid_contests.sort(key=lambda x: x[1])
+        scores = [(cid, score + 1) for cid, score in valid_contests[:30]]
+        min_score_6 = scores[0][1] ** 6
+        weights = [min_score_6 / (s ** 6) for _, s in scores]
+        chosen_cid = random.choices([c for c, _ in scores], weights=weights, k=1)[0]
+        
+        history_data.append(chosen_cid)
+        await save_data_to_channel(bot)
+        await status_msg.delete()
+
     await channel.send(
         f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
-        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n 参加する人はがんばってにゃ～ \n (終了から1分後に、自動で結果発表とパフォ計算を行うにゃ！)*"
+        f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n"
+        f"**ライブ順位表はここにゃ:** https://atcoder-vcon-bot-xxxx.onrender.com/\n"
+        //f"*(※遅れて参加ボタンを押しても順位表に反映されるにゃ！)*"
     )
 
-    # 終了時刻(100分後) + 1分後 に結果発表を予約！
+    # ライブ順位表タスクを開始時刻に予約
+    scheduler.add_job(trigger_live_standings, 'date', run_date=start_dt, args=[channel_id, message_id, chosen_cid, start_dt])
+
+    # 最終結果発表を終了1分後(101分後)に予約
     end_time = start_dt + datetime.timedelta(minutes=101)
-    scheduler.add_job(
-        aggregate_vcontest, 'date', run_date=end_time, 
-        args=[channel_id, chosen_cid, participants_discord_ids, start_dt]
-    )
+    scheduler.add_job(aggregate_vcontest, 'date', run_date=end_time, args=[channel_id, message_id, chosen_cid, start_dt])
 
 # ==========================================
-# ハイブリッド方式：自動集計・パフォ計算
+# 🟢 ライブ順位表 & WebSocket処理
 # ==========================================
-async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
+def trigger_live_standings(channel_id, message_id, cid, start_dt):
+    bot.loop.create_task(live_standings_loop(channel_id, message_id, cid, start_dt))
+
+async def live_standings_loop(channel_id, message_id, cid, start_dt):
     channel = bot.get_channel(channel_id)
-    if not channel: return
-    await channel.send(f" **{cid.upper()} バチャコン終了にゃ！！**\n`結果とパフォを取りに行ってくるにゃ～`")
+    if channel: await channel.send(f"🟢 **{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL: https://atcoder-vcon-bot-xxxx.onrender.com/")
 
     start_epoch = int(start_dt.timestamp())
-    # 100分間バチャ
+    end_dt = start_dt + datetime.timedelta(minutes=100)
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
+
+    try:
+        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
+        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
+        standings = s_res.json()
+        results = r_res.json()
+        tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
+    except:
+        return print("ライブ順位表: 本番データ取得失敗")
+
+    user_ratings = {}
+    
+    # 100分間ループ
+    while datetime.datetime.now(JST) < end_dt:
+        # その時点での参加者を再取得（遅刻参加対応！）
+        discord_ids = list(vcon_sessions.get(message_id, set()))
+        interval = max(10, len(discord_ids) * 1)
+
+        ranking_data = []
+        all_subs_data = []
+
+        for d_id in discord_ids:
+            user = users_data.get(d_id)
+            if not user: continue
+            
+            if user not in user_ratings:
+                try:
+                    h_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/users/{user}/history/json", headers=headers, cookies=cookies, timeout=10)
+                    if h_res.status_code == 200 and h_res.json(): user_ratings[user] = h_res.json()[-1].get("NewRating", 0)
+                    else: user_ratings[user] = 0
+                except: user_ratings[user] = 0
+
+            subs = []
+            url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
+            await asyncio.sleep(1.0)
+            try:
+                res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies)
+                soup = BeautifulSoup(res.text, 'html.parser')
+                rows = soup.select('table tbody tr')
+                if rows:
+                    for row in rows:
+                        cells = row.find_all('td')
+                        if len(cells) < 8: continue
+                        time_tag = cells[0].find('time')
+                        if not time_tag: continue
+                        sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
+                        
+                        if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
+                            task_link = cells[1].find('a')
+                            task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
+                            score_text = cells[4].text.strip()
+                            score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                            result_label = cells[6].find('span')
+                            result = result_label.text.strip() if result_label else "WJ"
+                            sub_id = row.get('data-id') or str(sub_epoch) # 簡易ID
+                            
+                            subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score, "id": sub_id})
+                            all_subs_data.append({
+                                "id": f"{user}_{sub_id}", "user": user, "user_rate": user_ratings[user],
+                                "prob": task_idx, "prob_title": f"Problem {task_idx}", "time": sub_epoch - start_epoch,
+                                "point": score, "result": result, "epoch": sub_epoch
+                            })
+            except: pass
+
+            subs.sort(key=lambda x: x["epoch_second"])
+            
+            problem_status = {}
+            total_score = last_ac_time = total_penalties = 0
+
+            for sub in subs:
+                task_idx = sub["problem_id"]
+                if task_idx not in problem_status: problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
+                p_data = problem_status[task_idx]
+                if p_data['ac_time'] != -1: continue 
+                
+                if sub["result"] == "AC":
+                    elapsed_sec = sub["epoch_second"] - start_epoch
+                    p_data['ac_time'] = elapsed_sec
+                    p_data['point'] = sub["point"]
+                    total_score += sub["point"]
+                    last_ac_time = max(last_ac_time, elapsed_sec)
+                    total_penalties += p_data['penalties']
+                elif sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                    p_data['penalties'] += 1
+
+            elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
+            
+            v_rank = 1
+            for s in standings["StandingsData"]:
+                s_score = s["TotalResult"]["Score"] / 100
+                s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
+                if s_score > total_score: v_rank += 1
+                elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
+                
+            perf = "-"
+            for r in results:
+                if r.get("Rank") == v_rank or r.get("Place") == v_rank:
+                    perf = r.get("Performance", "-")
+                    break
+
+            member = bot.get_guild(channel.guild.id).get_member(int(d_id)) if channel else None
+            display_name = member.display_name if member else user
+
+            ranking_data.append({
+                "id": user, "display": display_name, "score": int(total_score), "time": elapsed_penalty_sec,
+                "v_rank": v_rank, "perf": perf, "old_rate": user_ratings[user], "rate": user_ratings[user], # レート計算は省略
+                "status": problem_status, "penalties": total_penalties
+            })
+
+        # レート計算
+        for data in ranking_data:
+            try:
+                perf_int = int(data["perf"])
+                if data["old_rate"] > 0:
+                    x_new = (2.0 ** (data["old_rate"] / 400.0)) * 0.9 + (2.0 ** (perf_int / 400.0)) * 0.1
+                    data["rate"] = int(round(400.0 * math.log2(x_new)))
+            except: pass
+
+        all_subs_data.sort(key=lambda x: x["epoch"])
+        
+        # 🌐 Web側にデータを送信！
+        now_dt = datetime.datetime.now(JST)
+        elapsed_sec = int((now_dt - start_dt).total_seconds())
+        ws_data = {
+            "type": "update", "status": "running", "elapsed": elapsed_sec, "total": 100 * 60,
+            "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, "blink_user": None
+        }
+        
+        for ws in list(connected_clients):
+            try: await ws.send_json(ws_data)
+            except: connected_clients.remove(ws)
+        
+        await asyncio.sleep(interval)
+
+    # 終了シグナルをWebに送信
+    for ws in list(connected_clients):
+        try: await ws.send_json({"type": "update", "status": "finished", "elapsed": 6000, "total": 6000, "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data})
+        except: pass
+
+
+# ==========================================
+# 🏁 最終結果：自動集計・パフォ＆レート計算
+# ==========================================
+async def aggregate_vcontest(channel_id, message_id, cid, start_dt):
+    channel = bot.get_channel(channel_id)
+    if not channel: return
+    await channel.send(f"🏁 **{cid.upper()} バチャコン終了にゃ！！**\n`結果とパフォーマンスを持ってくるにゃ...`")
+
+    # 遅刻者対応！
+    discord_ids = list(vcon_sessions.get(message_id, set()))
+    
+    start_epoch = int(start_dt.timestamp())
     end_epoch = start_epoch + 100 * 60
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -286,8 +501,17 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
         user = users_data.get(d_id)
         if not user: continue
         
+        current_rating = 0
+        try:
+            h_url = f"https://atcoder.jp/users/{user}/history/json"
+            await asyncio.sleep(1.0)
+            h_res = await asyncio.to_thread(requests.get, h_url, headers=headers, cookies=cookies, timeout=10)
+            if h_res.status_code == 200 and h_res.json():
+                current_rating = h_res.json()[-1].get("NewRating", 0)
+        except: pass
+
         subs = []
-        for page in range(1, 4): # 最大3ページ(60提出)まで見る
+        for page in range(1, 4):
             url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
             await asyncio.sleep(1.0)
             res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies)
@@ -306,7 +530,6 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
                     sub_epoch = int(sub_dt.timestamp())
                 except: continue
 
-                # バチャ期間内の提出のみを対象
                 if start_epoch <= sub_epoch <= end_epoch:
                     task_link = cells[1].find('a')
                     task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
@@ -321,15 +544,11 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
         subs.sort(key=lambda x: x["epoch_second"])
         
         problem_status = {}
-        total_score = 0
-        last_ac_time = 0
-        total_penalties = 0
+        total_score = last_ac_time = total_penalties = 0
 
         for sub in subs:
             task_idx = sub["problem_id"]
-            if task_idx not in problem_status:
-                problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
-            
+            if task_idx not in problem_status: problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0}
             p_data = problem_status[task_idx]
             if p_data['ac_time'] != -1: continue 
             
@@ -365,12 +584,13 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
             "user": user, "display": display_name,
             "score": int(total_score), "time": elapsed_penalty_sec,
             "rank": v_rank, "perf": perf,
+            "current_rating": current_rating,
             "status": problem_status, "penalties": total_penalties
         })
 
     ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
 
-    msg_lines = [f"**{cid.upper()} バチャコンの結果を発表するにゃ！**"]
+    msg_lines = [f" **{cid.upper()} バチャコン 最終結果** \n*(※綺麗な順位表の画像はWeb版の 📥 ボタンから保存して共有できるにゃ！)*"]
     for i, data in enumerate(ranking_data):
         m, s = divmod(data["time"], 60)
         time_str = f"{int(m)}:{int(s):02d}"
@@ -382,10 +602,8 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
 
         for j, t in enumerate(tasks):
             if j > last_ac_index: break 
-            
             p_data = data["status"].get(t, {'ac_time': -1, 'penalties': 0})
             pens = p_data["penalties"]
-            
             if p_data["ac_time"] != -1:
                 cross = "" if pens == 0 else ("❌" * pens if pens < 3 else f"❌x{pens}")
                 tm, ts = divmod(p_data["ac_time"], 60)
@@ -396,24 +614,71 @@ async def aggregate_vcontest(channel_id, cid, discord_ids, start_dt):
 
         task_line = " | ".join(task_strs) if task_strs else "提出なし"
         
-        msg_lines.append(f"**{i+1}({data['rank']})位**: {data['user']} @{data['display']}  {data['score']}pts - {time_str}({data['penalties']}) perf : **{data['perf']}**")
+        perf = data["perf"]
+        current_rating = data["current_rating"]
+        rating_str = ""
+        try:
+            perf_int = int(perf)
+            if current_rating > 0:
+                x_old = 2.0 ** (current_rating / 400.0)
+                x_perf = 2.0 ** (perf_int / 400.0)
+                x_new = x_old * 0.9 + x_perf * 0.1
+                new_rate = int(round(400.0 * math.log2(x_new)))
+                diff = new_rate - current_rating
+                sign = "+" if diff >= 0 else ""
+                rating_str = f" | Rate: {current_rating} → **{new_rate}** ({sign}{diff})"
+        except: pass
+
+        msg_lines.append(f"**{i+1}({data['rank']})位**: {data['user']}@{data['display']}  {data['score']}pts - {time_str}({data['penalties']}) perf : **{perf}**{rating_str}")
         msg_lines.append(f"  [{task_line}]")
 
     await channel.send("\n".join(msg_lines))
+    
+    # 使い終わった予定を削除
+    if str(message_id) in vcons_data:
+        del vcons_data[str(message_id)]
+        await save_data_to_channel(bot)
 
 # ==========================================
-# Renderのお昼寝防止用ダミーサーバー
+# 🌐 Web & WebSocket サーバー (aiohttp)
 # ==========================================
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+async def handle_index(request):
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            html = f.read()
+            # サーバーのURLを自動で埋め込む
+            ws_url = "wss://" + request.host + "/ws" if "onrender.com" in request.host else "ws://" + request.host + "/ws"
+            html = html.replace("/* WEBSOCKET_INJECTION_POINT */", f"const WS_URL = '{ws_url}';")
+        return web.Response(text=html, content_type='text/html')
+    except Exception as e:
+        return web.Response(text=f"index.html が見つからないにゃ... ({e})", status=404)
 
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler).serve_forever()
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    connected_clients.add(ws)
+    print("Web画面が繋がったにゃ！")
+    try:
+        async for msg in ws: pass
+    finally:
+        connected_clients.remove(ws)
+        print("Web画面が閉じたにゃ...")
+    return ws
 
-threading.Thread(target=run_server, daemon=True).start()
+async def web_server_runner():
+    app = web.Application()
+    app.add_routes([web.get('/', handle_index), web.get('/ws', websocket_handler)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    print(f"Webサーバーをポート {PORT} で起動したにゃ！")
 
-bot.run(TOKEN)
+# Discord Botの起動とWebサーバーの並列起動
+async def main():
+    async with bot:
+        bot.loop.create_task(web_server_runner())
+        await bot.start(TOKEN)
+
+if __name__ == "__main__":
+    asyncio.run(main())
