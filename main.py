@@ -331,7 +331,7 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     await channel.send(
         f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
         f"開始時間は **{start_dt.strftime('%H:%M')}** だにゃ！\n"
-        f"**ライブ順位表はここにゃ:** https://atcoder-vcon-bot-xxxx.onrender.com/\n"
+        f"**ライブ順位表はここにゃ:**  https://virtual-contest-cat.onrender.com/\n"
         #f"*(※遅れて参加ボタンを押しても順位表に反映されるにゃ！)*"
     )
 
@@ -351,7 +351,7 @@ def trigger_live_standings(channel_id, message_id, cid, start_dt):
 async def live_standings_loop(channel_id, message_id, cid, start_dt):
     import traceback # エラー解析用に追加
     channel = bot.get_channel(channel_id)
-    if channel: await channel.send(f"🟢 **{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL: https://atcoder-vcon-bot-xxxx.onrender.com/")
+    if channel: await channel.send(f"🟢 **{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL:  https://virtual-contest-cat.onrender.com/\n")
 
     start_epoch = int(start_dt.timestamp())
     end_dt = start_dt + datetime.timedelta(minutes=100)
@@ -690,7 +690,7 @@ async def handle_index(request):
             html = f.read()
             # サーバーのURLを自動で埋め込む
             ws_url = "wss://" + request.host + "/ws" if "onrender.com" in request.host else "ws://" + request.host + "/ws"
-            html = html.replace("/* WEBSOCKET_INJECTION_POINT */", f"const WS_URL = '{ws_url}';")
+            html = html.replace("/* WEBSOCKET_INJECTION_POINT */", f"var WS_URL = '{ws_url}';")
         return web.Response(text=html, content_type='text/html')
     except Exception as e:
         return web.Response(text=f"index.html が見つからないにゃ... ({e})", status=404)
