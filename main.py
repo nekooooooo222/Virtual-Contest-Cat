@@ -392,7 +392,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     while datetime.datetime.now(JST) < end_dt:
         try: 
             discord_ids = list(vcon_sessions.get(message_id, set()))
-            interval = 3 
+            interval = 1 
 
             ranking_data = []
             all_subs_data = []
@@ -410,7 +410,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 
                 subs = []
                 url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
-                await asyncio.sleep(0.75)
+                await asyncio.sleep(0.1)
                 try:
                     res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies, timeout=10)
                     soup = BeautifulSoup(res.text, 'html.parser')
@@ -556,7 +556,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
         except Exception as e:
             err_msg = traceback.format_exc()
             print(f"内部エラー発生: {err_msg}")
-            if channel: await channel.send(f"⚠️ 順位表の更新中にエラーが起きたにゃ！\n```py\n{e}\n```\n`10秒後に再試行するにゃ...`")
+            if channel: await channel.send(f"順位表の更新中にエラーが起きたにゃ！\n```py\n{e}\n```\n`10秒後に再試行するにゃ...`")
             await asyncio.sleep(10)
 
     final_data = {"type": "update", "status": "finished", "elapsed": duration_sec, "total": duration_sec, "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data}
@@ -576,7 +576,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec=6000):
     channel = bot.get_channel(channel_id)
     if not channel: return
-    await channel.send(f"🏁 **{cid.upper()} バチャコン終了にゃ！！**\n`結果とパフォーマンスを持ってくるにゃ...`")
+    await channel.send(f" **{cid.upper()} バチャコン終了にゃ！！**\n`結果とパフォーマンスを持ってくるにゃ...`")
 
     discord_ids = list(vcon_sessions.get(message_id, set()))
     
