@@ -376,7 +376,6 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     except Exception as e:
         if channel: await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...(`{e}`)")
         return
-
     try:
         r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
         results = r_res.json()
