@@ -369,13 +369,18 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
         
         tasks = []
         task_names = {}
+        screen_to_assign = {} # 👑 URLの(arc058_a)から(C)に変換する辞書
         for t in standings.get("TaskInfo", []):
             assignment = t["Assignment"]
+            screen_name = t["TaskScreenName"]
             tasks.append(assignment)
+            screen_to_assign[screen_name] = assignment
+            
             task_names[assignment] = f"{assignment} - {t.get('TaskName', 'Problem ' + assignment)}"
     except Exception as e:
         if channel: await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...(`{e}`)")
         return
+
     try:
         r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
         results = r_res.json()
@@ -420,7 +425,14 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                             
                             if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
                                 task_link = cells[1].find('a')
-                                task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
+                                if task_link:
+                                    # 👑 URLからIDを抽出し、正しいAssignment(CやD)に変換！
+                                    href = task_link.get('href', '')
+                                    screen_name = href.split('?')[0].strip('/').split('/')[-1]
+                                    task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
+                                else:
+                                    task_idx = 'A'
+
                                 score_text = cells[4].text.strip()
                                 score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
                                 result_label = cells[6].find('span')
@@ -511,7 +523,8 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                         data["rate"] = int(round(400.0 * math.log2(x_new)))
                 except: pass
                 
-                r = data["rate"]
+                # 👑 瓦は「コンテスト前のレート」を参照！
+                r = data["old_rate"]
                 if r <= 0:
                     data["dan"] = 1
                 elif r >= 2800:
@@ -581,7 +594,11 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     except Exception as e:
         return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)")
 
-    tasks = [t["Assignment"] for t in standings["TaskInfo"]] 
+    tasks = []
+    screen_to_assign = {}
+    for t in standings.get("TaskInfo", []):
+        tasks.append(t["Assignment"])
+        screen_to_assign[t["TaskScreenName"]] = t["Assignment"]
     
     ranking_data = []
     for d_id in discord_ids:
@@ -619,7 +636,14 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
 
                 if start_epoch <= sub_epoch <= end_epoch:
                     task_link = cells[1].find('a')
-                    task_idx = task_link.get('href', '').split('_')[-1].upper() if task_link else 'A'
+                    if task_link:
+                        # 👑 終了集計時も正しく変換！
+                        href = task_link.get('href', '')
+                        screen_name = href.split('?')[0].strip('/').split('/')[-1]
+                        task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
+                    else:
+                        task_idx = 'A'
+                        
                     score_text = cells[4].text.strip()
                     score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
                     result_label = cells[6].find('span')
