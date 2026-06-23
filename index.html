@@ -62,7 +62,6 @@
         .time-text { font-size: 0.85em; color: #bbb; } 
         .score-text { font-weight: bold; font-size: 1.1em; color: #ffcc00; } 
         .prob-cell { line-height: 1.1; } 
-        /* 【変更箇所】 <style> タグ内 */
 
         /* 👑 TimeとScoreを0.85frに縮め、削った分をResultに回す！ */
         .sub-row, .sub-header-row { display: grid; grid-template-columns: 1.8fr 1.5fr 0.85fr 0.85fr 1.3fr; }
@@ -254,10 +253,8 @@
                         scoreHeaderRow.innerHTML = headerHTML;
                     }
 
-                    // 【変更箇所】 connectWebSocket 関数内
-                    // 3. 順位表の更新 (blink_usersに変更)
+                    // 順位表と提出一覧の更新
                     updateStandings(data.standings, data.blink_users);
-                    // 4. 提出一覧の更新
                     updateSubmissions(data.submissions);
                 }
             };
@@ -268,7 +265,7 @@
         // ==========================================
         // 描画関数 (Score / Submissions)
         // ==========================================
-        function updateStandings(standingsData, blinkUserId) {
+        function updateStandings(standingsData, blinkUsers) {
             standingsData.forEach((user, index) => {
                 let el = standingElements[user.id];
                 if (!el) {
@@ -300,8 +297,10 @@
                 const sign = diff >= 0 ? '+' : '';
                 const rateDiffStr = diff !== 0 ? ` <span style="font-size: 0.85em; color: #aaa;">(${sign}${diff})</span>` : '';
 
-                // 👑 ユーザー名の左に瓦を配置
-                const kawaraHtml = getKawaraHtml(user.dan, oldRateColor);
+                // 👑 JS側で瓦の段位を計算するように変更！
+                const userDan = user.old_rate <= 0 ? 1 : (user.old_rate >= 2800 ? 0 : Math.floor((user.old_rate % 400) / 100) + 1);
+                const kawaraHtml = getKawaraHtml(userDan, oldRateColor);
+                
                 const displayDiv = `<div style="font-weight: bold; font-size: 1.1em; color: ${oldRateColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: flex-end;">${kawaraHtml}<span style="line-height: 1;">${user.display}</span></div>`;
 
                 el.innerHTML = `
@@ -317,7 +316,8 @@
                 `;
                 el.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
 
-                if (user.id === blinkUserId) {
+                // 👑 配列(blinkUsers)に含まれているかで判定
+                if (blinkUsers && blinkUsers.includes(user.id)) {
                     el.classList.remove('blink'); void el.offsetWidth; el.classList.add('blink');
                 }
             });
@@ -345,25 +345,20 @@
 
                 const userColor = getRatingColor(sub.user_rate);
                 const probStyle = getProblemStyle(sub.prob);
-                // 【変更箇所】 updateSubmissions 関数内
-                // 👑 正規表現による判定ロジック
+                
                 let resClass = 'wj';
                 const resText = sub.result.toUpperCase();
-
+                
+                // 👑 正規表現の処理を綺麗にリファクタリング
+                const match = resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/);
                 if (resText === 'AC') {
                     resClass = 'ac';
-                } 
-                // "2/15 WA" のように、中にWAやTLEが含まれていれば強制的に黄色！
-                else if (resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/)) {
-                    const match = resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/);
+                } else if (match) {
                     resClass = match[0].toLowerCase();
-                } 
-                // エラー文字が含まれていない "3/15" などは正常なジャッジ中なので灰色！
-                else if (resText.includes('/')) {
+                } else if (resText.includes('/')) {
                     resClass = 'wj-progress';
                 }
 
-                // 👑 提出一覧のユーザー名の左にも瓦を配置 (既存のコードのまま)
                 const kawaraHtml = getKawaraHtml(sub.dan, userColor);
                 const userDiv = `<div style="font-weight: bold; color: ${userColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: flex-end;">${kawaraHtml}<span style="line-height: 1;">${sub.user}</span></div>`;
 
