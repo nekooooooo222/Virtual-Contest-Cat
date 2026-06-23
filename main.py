@@ -193,8 +193,14 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
             return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
         run_time = now + datetime.timedelta(minutes=2)
 
+    # 【変更箇所】 vcontest 関数内
     comment_text = f"💬 {comment}\n\n" if comment else ""
-    contest_text = f"👉 開催予定: **{contest_id.upper()}**\n" if contest_id else f"(*{run_time.strftime('%H:%M')} に、ねこが最適な回を自動決定するにゃ*)\n"
+    
+    # 👑 自動決定の時は、type (ABC/ARC/AGC) を表示するように変更！
+    if contest_id:
+        contest_text = f"👉 開催予定: **{contest_id.upper()}**\n"
+    else:
+        contest_text = f"👉 対象コンテスト: **{type.upper()}**\n(*{run_time.strftime('%H:%M')} に、ねこが最適な回を自動決定するにゃ*)\n"
 
     base_text = (
         f"📢 **バチャコン募集！**\n"
@@ -387,7 +393,9 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     except:
         results = []
 
+   # 【追加箇所】 live_standings_loop 関数の中腹
     user_ratings = {}
+    previous_scores = {} # 👑 前回のスコアを記憶する用
     
     while datetime.datetime.now(JST) < end_dt:
         try: 
@@ -515,22 +523,29 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                     "status": problem_status, "penalties": total_penalties
                 })
 
+
+            all_subs_data.sort(key=lambda x: x["epoch"])
+            
+            # 👑 1. 順位表を「スコア降順・タイム昇順」でソートする！
+            ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
+
+            # 👑 2. 前回からスコアが上がった（ACした）ユーザーを特定する！
+            blink_users = []
             for data in ranking_data:
-                try:
-                    perf_int = int(data["perf"])
-                    if data["old_rate"] > 0:
-                        x_new = (2.0 ** (data["old_rate"] / 400.0)) * 0.9 + (2.0 ** (perf_int / 400.0)) * 0.1
-                        data["rate"] = int(round(400.0 * math.log2(x_new)))
-                except: pass
-                
-                # 👑 瓦は「コンテスト前のレート」を参照！
-                r = data["old_rate"]
-                if r <= 0:
-                    data["dan"] = 1
-                elif r >= 2800:
-                    data["dan"] = 0 
-                else:
-                    data["dan"] = (r % 400) // 100 + 1
+                user_id = data["id"]
+                score = data["score"]
+                # 前回の記録があって、今回スコアが増えていれば光らせるリストに追加
+                if user_id in previous_scores and previous_scores[user_id] < score:
+                    blink_users.append(user_id)
+                previous_scores[user_id] = score
+            
+            now_dt = datetime.datetime.now(JST)
+            elapsed_sec = int((now_dt - start_dt).total_seconds())
+            ws_data = {
+                "type": "update", "status": "running", "elapsed": elapsed_sec, "total": duration_sec,
+                "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, 
+                "blink_users": blink_users # 👑 配列で送るように変更！
+            }
 
             all_subs_data.sort(key=lambda x: x["epoch"])
             
