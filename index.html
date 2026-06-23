@@ -62,13 +62,20 @@
         .time-text { font-size: 0.85em; color: #bbb; } 
         .score-text { font-weight: bold; font-size: 1.1em; color: #ffcc00; } 
         .prob-cell { line-height: 1.1; } 
-        .sub-row, .sub-header-row { display: grid; grid-template-columns: 1.8fr 1.5fr 1fr 1fr 1fr; }
+        /* 【変更箇所】 <style> タグ内 */
+
+        /* 👑 TimeとScoreを0.85frに縮め、削った分をResultに回す！ */
+        .sub-row, .sub-header-row { display: grid; grid-template-columns: 1.8fr 1.5fr 0.85fr 0.85fr 1.3fr; }
         
-        .badge { padding: 2px 4px; border-radius: 3px; font-weight: bold; text-align: center; width: fit-content; color: white; transition: background-color 0.3s; font-size: 0.95em; }
+        /* 👑 バッジの改行防止 (white-space: nowrap;) を追加 */
+        .badge { padding: 2px 4px; border-radius: 3px; font-weight: bold; text-align: center; width: fit-content; color: white; transition: background-color 0.3s; font-size: 0.95em; white-space: nowrap; }
+        
         .badge.ac { background-color: #5cb85c; }
-        .badge.wa, .badge.tle, .badge.re, .badge.mle, .badge.ce { background-color: #f0ad4e; }
+        /* 👑 OLEやIEなどを網羅 */
+        .badge.wa, .badge.tle, .badge.re, .badge.mle, .badge.ce, .badge.ole, .badge.ie, .badge.qle { background-color: #f0ad4e; }
         .badge.wj { background-color: #777777; }
-        .badge.wj-progress { background-color: #f0ad4e; color: #fff; }
+        /* 👑 ジャッジ中も灰色にする */
+        .badge.wj-progress { background-color: #777777; color: #fff; }
         .prob-ac { color: #5cb85c; font-weight: bold; }
         .prob-none { color: #777; }
 
@@ -247,7 +254,10 @@
                         scoreHeaderRow.innerHTML = headerHTML;
                     }
 
-                    updateStandings(data.standings, data.blink_user);
+                    // 【変更箇所】 connectWebSocket 関数内
+                    // 3. 順位表の更新 (blink_usersに変更)
+                    updateStandings(data.standings, data.blink_users);
+                    // 4. 提出一覧の更新
                     updateSubmissions(data.submissions);
                 }
             };
@@ -335,12 +345,25 @@
 
                 const userColor = getRatingColor(sub.user_rate);
                 const probStyle = getProblemStyle(sub.prob);
+                // 【変更箇所】 updateSubmissions 関数内
+                // 👑 正規表現による判定ロジック
                 let resClass = 'wj';
-                if(sub.result === 'AC') resClass = 'ac';
-                else if(['WA','TLE','RE','MLE','CE'].includes(sub.result)) resClass = sub.result.toLowerCase();
-                else if(sub.result.includes('/')) resClass = 'wj-progress';
+                const resText = sub.result.toUpperCase();
 
-                // 👑 提出一覧のユーザー名の左にも瓦を配置
+                if (resText === 'AC') {
+                    resClass = 'ac';
+                } 
+                // "2/15 WA" のように、中にWAやTLEが含まれていれば強制的に黄色！
+                else if (resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/)) {
+                    const match = resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/);
+                    resClass = match[0].toLowerCase();
+                } 
+                // エラー文字が含まれていない "3/15" などは正常なジャッジ中なので灰色！
+                else if (resText.includes('/')) {
+                    resClass = 'wj-progress';
+                }
+
+                // 👑 提出一覧のユーザー名の左にも瓦を配置 (既存のコードのまま)
                 const kawaraHtml = getKawaraHtml(sub.dan, userColor);
                 const userDiv = `<div style="font-weight: bold; color: ${userColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: flex-end;">${kawaraHtml}<span style="line-height: 1;">${sub.user}</span></div>`;
 
