@@ -90,25 +90,38 @@ async def save_data_to_channel(bot):
     channel = bot.get_channel(DATA_CHANNEL_ID)
     if not channel: return
 
-    for msg_id, participants in vcon_sessions.items():
-        if str(msg_id) in vcons_data:
-            vcons_data[str(msg_id)]["participants"] = list(participants)
+    now = datetime.datetime.now(JST)
+    for msg_id_str, v_data in vcons_data.items():
+                        
+        # ====== 🚨 今回限りのハードコーディング 🚨 ======
+        if v_data.get("contest_id") is None:
+            v_data["contest_id"] = "arc134"
+            v_data["duration_sec"] = 7200  # ARC134は120分
+        # ===============================================
 
-    data = {"users": users_data, "history": history_data, "vcons": vcons_data}
-    json_str = json.dumps(data, indent=2, ensure_ascii=False)
-    
-    file = discord.File(io.BytesIO(json_str.encode('utf-8')), filename="data.json")
-    content_text = "📁 データ保存用（2000文字制限回避のためファイル化）"
+        start_dt = datetime.datetime.fromisoformat(v_data["start_time"])
+        channel_id = v_data["channel_id"]
+        msg_id = int(msg_id_str)
+                        
+        # 👑 コンテストIDと時間を取得
+        contest_id = v_data.get("contest_id")
+        duration_sec = v_data.get("duration_sec", 6000)
+                        
+        if msg_id not in vcon_sessions:
+            vcon_sessions[msg_id] = set(v_data.get("participants", []))
+                        
+        end_dt = start_dt + datetime.timedelta(seconds=duration_sec)
 
-    if data_message_id:
-        try:
-            msg = await channel.fetch_message(data_message_id)
-            await msg.edit(content=content_text, attachments=[file])
-            return
-        except discord.NotFound: pass
-
-    msg = await channel.send(content=content_text, file=file)
-    data_message_id = msg.id
+        if start_dt > now:
+                            # 1. まだ開始前の場合
+            run_time = start_dt - datetime.timedelta(minutes=90)
+            if contest_id:
+                # すでに決定済みなら、決定処理はスキップして順位表タイマーだけセット！
+                scheduler.add_job(live_standings_loop, 'date', run_date=start_dt, args=[channel_id, msg_id, contest_id, start_dt, duration_sec])
+                scheduler.add_job(aggregate_vcontest, 'date', run_date=end_dt + datetime.timedelta(seconds=60), args=[channel_id, msg_id, contest_id, start_dt, duration_sec])
+            else:
+                                # (※今回はハードコードされているのでここは通りません)
+                pass
 
 # ==========================================
 # UIコンポーネント
@@ -200,7 +213,7 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     if contest_id:
         contest_text = f"👉 開催予定: **{contest_id.upper()}**\n"
     else:
-        contest_text = f"👉 対象コンテスト: **{type.upper()}**\n(*{run_time.strftime('%H:%M')} に、ねこが最適な回を自動決定するにゃ*)\n"
+        contest_text = f"対象コンテスト: **{type.upper()}**\n(*{run_time.strftime('%H:%M')} に、ねこが最適な回を自動決定するにゃ*)\n"
 
     base_text = (
         f"📢 **バチャコン募集！**\n"
@@ -340,9 +353,18 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     except:
         contests_dict = {}
 
+   # 【変更箇所】 decide_vcontest の下の方
+
+    # ･･･(中略)･･･
     duration_sec = 100 * 60
     if chosen_cid in contests_dict:
         duration_sec = contests_dict[chosen_cid].get("duration_second", 100 * 60)
+
+    # 👑 【ここを追加】決定したコンテストIDと時間を予約データに上書き保存する！
+    if str(message_id) in vcons_data:
+        vcons_data[str(message_id)]["contest_id"] = chosen_cid
+        vcons_data[str(message_id)]["duration_sec"] = duration_sec
+        await save_data_to_channel(bot)
 
     await channel.send(
         f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
