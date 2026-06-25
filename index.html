@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>バチャコン ライブオーバーレイ</title>
-    <!-- 画像化するためのライブラリを読み込み -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        /* スクロールバーのカスタマイズ */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
@@ -16,7 +14,6 @@
         body { background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 10px; display: flex; flex-direction: column; gap: 10px; height: 100vh; box-sizing: border-box; font-size: 9px; overflow: hidden; }
         .main-container { display: flex; flex-direction: row; gap: 0; flex-grow: 1; overflow: hidden; }
         
-        /* PCとスマホで幅の設定を完全に分岐！狭いときは幅100%を有効活用 */
         @media (min-width: 901px) {
             .main-container { flex-direction: row; }
             .score-panel { width: 60%; flex-shrink: 0; border-right: 1px solid #555; padding-right: 10px; }
@@ -24,7 +21,6 @@
         }
         @media (max-width: 900px) {
             .main-container { flex-direction: column; overflow-y: auto; }
-            /* スマホ時は高さを50%ずつに均等分割し、横幅を100%フル活用！ */
             .score-panel { width: 100%; flex: 1 1 50%; min-height: 250px; border-right: none !important; border-bottom: 1px solid #555; padding-right: 0 !important; padding-bottom: 10px; margin-bottom: 10px; }
             .sub-panel { width: 100%; flex: 1 1 50%; min-height: 250px; padding-left: 0 !important; }
         }
@@ -48,14 +44,36 @@
         .header-row { padding: 6px 6px; border-bottom: 2px solid #555; font-weight: bold; color: #eeeeee; align-items: center; position: sticky; top: 0; background-color: #1e1e1e; z-index: 10; }
         .list-container { position: relative; margin-top: 4px; }
 
-        /* ゼブラストライプ */
-        .row-item {
+        .score-wrapper {
+            position: absolute;
+            width: 100%;
+            height: 32px;
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+            z-index: 1;
+        }
+
+        .score-content {
             --row-bg: #2a2a2a; 
-            padding: 0 6px; height: 32px; background-color: var(--row-bg); border-radius: 4px; align-items: center; position: absolute; width: 100%; box-sizing: border-box; transition: transform 0.3s cubic-bezier(0.39, 0.575, 0.565, 1), opacity 0.3s ease;
+            width: 100%;
+            height: 100%;
+            display: grid;
+            align-items: center;
+            padding: 0 6px;
+            box-sizing: border-box;
+            border-radius: 4px;
+            background-color: var(--row-bg);
+            transition: background-color 0.3s ease;
         }
-        .row-odd {
-            --row-bg: #222222; 
+        .score-content.row-odd { --row-bg: #222222; }
+
+        .sub-item {
+            --row-bg: #2a2a2a; 
+            position: absolute; width: 100%; height: 32px; display: grid; align-items: center;
+            padding: 0 6px; box-sizing: border-box; border-radius: 4px;
+            background-color: var(--row-bg);
+            transition: transform 0.3s cubic-bezier(0.39, 0.575, 0.565, 1), opacity 0.3s ease;
         }
+        .sub-item.row-odd { --row-bg: #222222; }
 
         .pen-text { color: #ff4d4d; font-size: 0.85em; font-weight: bold; } 
         .vrank-text { color: #aaa; font-size: 0.8em; font-weight: normal; }
@@ -63,22 +81,16 @@
         .score-text { font-weight: bold; font-size: 1.1em; color: #ffcc00; } 
         .prob-cell { line-height: 1.1; } 
 
-        /* 👑 TimeとScoreを0.85frに縮め、削った分をResultに回す！ */
         .sub-row, .sub-header-row { display: grid; grid-template-columns: 1.8fr 1.5fr 0.85fr 0.85fr 1.3fr; }
         
-        /* 👑 バッジの改行防止 (white-space: nowrap;) を追加 */
         .badge { padding: 2px 4px; border-radius: 3px; font-weight: bold; text-align: center; width: fit-content; color: white; transition: background-color 0.3s; font-size: 0.95em; white-space: nowrap; }
-        
         .badge.ac { background-color: #5cb85c; }
-        /* 👑 OLEやIEなどを網羅 */
         .badge.wa, .badge.tle, .badge.re, .badge.mle, .badge.ce, .badge.ole, .badge.ie, .badge.qle { background-color: #f0ad4e; }
         .badge.wj { background-color: #777777; }
-        /* 👑 ジャッジ中も灰色にする */
         .badge.wj-progress { background-color: #777777; color: #fff; }
         .prob-ac { color: #5cb85c; font-weight: bold; }
         .prob-none { color: #777; }
 
-        /* 👑 瓦（段位）アイコン用のスタイル */
         .kawara-container {
             display: inline-flex;
             flex-direction: column; 
@@ -86,6 +98,16 @@
             margin-right: 4px; 
             margin-bottom: 2px; 
         }
+
+        @keyframes popUpMove {
+            0% { transform: scale(1); box-shadow: 0 0 0 rgba(0,0,0,0); }
+            50% { 
+                transform: scale(1.03); 
+                box-shadow: 0 5px 15px rgba(0,0,0,0.5), 0 0 10px rgba(0, 255, 255, 0.3);
+            }
+            100% { transform: scale(1); box-shadow: 0 0 0 rgba(0,0,0,0); }
+        }
+        .pop-up { animation: popUpMove 0.4s ease-in-out; }
 
         @keyframes cyan-blink { 
             0% { background-color: var(--row-bg); } 
@@ -153,9 +175,6 @@
     </div>
 
     <script>
-        // ==========================================
-        // UI制御（ポップアウト ＆ ダウンロード）
-        // ==========================================
         window.addEventListener('DOMContentLoaded', () => {
             const params = new URLSearchParams(window.location.search);
             const viewMode = params.get('view');
@@ -184,33 +203,31 @@
             });
         }
 
-        // ==========================================
-        // 共通設定・ユーティリティ
-        // ==========================================
         const ROW_HEIGHT = 34; 
-        const getRatingColor = rate => rate < 400 ? '#999999' : rate < 800 ? '#cc7000' : rate < 1200 ? '#00cc00' : rate < 1600 ? '#00cccc' : rate < 2000 ? '#4444ff' : rate < 2400 ? '#cccc00' : rate < 2800 ? '#ff9900' : '#ff0000';
+        
+        // 👑 【修正】AHCの時などに送られてくる「-」の場合に真っ赤になるバグを修正
+        const getRatingColor = rate => {
+            if (rate === "-" || rate === undefined || rate === null) return '#ffffff';
+            return rate < 400 ? '#999999' : rate < 800 ? '#cc7000' : rate < 1200 ? '#00cc00' : rate < 1600 ? '#00cccc' : rate < 2000 ? '#4444ff' : rate < 2400 ? '#cccc00' : rate < 2800 ? '#ff9900' : '#ff0000';
+        };
+        
         const getProblemStyle = p => p==='A' ? 'color:#ff4d4d;' : p==='B' ? 'color:#4d4dff;' : p==='C' ? 'color:#ffcc00;' : p==='D' ? 'color:#00cc00;' : p==='E' ? 'color:#00cccc;' : p==='F' ? 'color:#aa00aa;' : p==='G' ? 'color:#ff9900;' : 'background:linear-gradient(to bottom, #ff99cc, #33ccff); -webkit-background-clip:text; -webkit-text-fill-color:transparent;';
         const formatTime = s => (s === undefined || s === null) ? '-' : `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
 
-        // 👑 瓦のSVGを生成する関数 (60%サイズに縮小！)
         function getKawaraHtml(dan, colorCode) {
             if (dan <= 0) return ""; 
 
             let svgs = "";
             for (let i = 0; i < dan; i++) {
-                // 重なるめり込み幅も60% (-2.5px * 0.6 = -1.5px) に！
                 let marginTop = (i === 0) ? "0px" : "-2px";
                 svgs += `
                 <svg width="10.8" height="4.2" viewBox="0 3 18 7" style="display:block; margin-top:${marginTop}; color:${colorCode};">
                     <path d="M 1,9 L 9,4.4 L 17,9" stroke="currentColor" stroke-width="1.75" fill="none" stroke-linejoin="miter" stroke-linecap="butt"/>
                 </svg>`;
             }
-            // 右側の余白を少しだけ確保して綺麗に並べる
             return `<div class="kawara-container" style="margin-right: 1px; margin-bottom: 0px;">${svgs}</div>`;
         }
-        // ==========================================
-        // WebSocket連携処理
-        // ==========================================
+
         /* WEBSOCKET_INJECTION_POINT */
         if (typeof WS_URL === 'undefined') {
             var WS_URL = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/ws";
@@ -225,6 +242,7 @@
         let gridTemplateColumns = "";
         let standingElements = {};
         let submissionElements = {};
+        let previousIndex = {}; 
 
         function connectWebSocket() {
             const ws = new WebSocket(WS_URL);
@@ -253,7 +271,6 @@
                         scoreHeaderRow.innerHTML = headerHTML;
                     }
 
-                    // 順位表と提出一覧の更新
                     updateStandings(data.standings, data.blink_users);
                     updateSubmissions(data.submissions);
                 }
@@ -262,23 +279,30 @@
         }
         connectWebSocket();
 
-        // ==========================================
-        // 描画関数 (Score / Submissions)
-        // ==========================================
         function updateStandings(standingsData, blinkUsers) {
             standingsData.forEach((user, index) => {
-                let el = standingElements[user.id];
-                if (!el) {
-                    el = document.createElement('div');
-                    el.className = 'row-item score-row';
-                    el.style.display = 'grid';
-                    scoreList.appendChild(el);
-                    standingElements[user.id] = el;
+                let wrapper = standingElements[user.id];
+                let content;
+                
+                if (!wrapper) {
+                    wrapper = document.createElement('div');
+                    wrapper.className = 'score-wrapper';
+                    
+                    content = document.createElement('div');
+                    content.className = 'score-content';
+                    content.id = `content-${user.id}`;
+                    
+                    wrapper.appendChild(content);
+                    scoreList.appendChild(wrapper);
+                    standingElements[user.id] = wrapper;
+                } else {
+                    content = wrapper.querySelector('.score-content');
                 }
-                el.style.gridTemplateColumns = gridTemplateColumns;
 
-                if (index % 2 === 0) el.classList.add('row-odd');
-                else el.classList.remove('row-odd');
+                content.style.gridTemplateColumns = gridTemplateColumns;
+
+                if (index % 2 === 0) content.classList.add('row-odd');
+                else content.classList.remove('row-odd');
 
                 const penText = user.penalties > 0 ? `<span class="pen-text">(${user.penalties})</span>` : '';
                 let probsHTML = '';
@@ -297,13 +321,12 @@
                 const sign = diff >= 0 ? '+' : '';
                 const rateDiffStr = diff !== 0 ? ` <span style="font-size: 0.85em; color: #aaa;">(${sign}${diff})</span>` : '';
 
-                // 👑 JS側で瓦の段位を計算するように変更！
                 const userDan = user.old_rate <= 0 ? 1 : (user.old_rate >= 2800 ? 0 : Math.floor((user.old_rate % 400) / 100) + 1);
                 const kawaraHtml = getKawaraHtml(userDan, oldRateColor);
                 
                 const displayDiv = `<div style="font-weight: bold; font-size: 1.1em; color: ${oldRateColor}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: flex-end;">${kawaraHtml}<span style="line-height: 1;">${user.display}</span></div>`;
 
-                el.innerHTML = `
+                content.innerHTML = `
                     <div style="font-weight: bold; font-size: 1.1em;">${index + 1}<br><span class="vrank-text">(${user.v_rank})</span></div>
                     ${displayDiv}
                     <div class="prob-cell">${formatTime(user.time)}<br>${penText}</div>
@@ -314,11 +337,27 @@
                         <span style="color: ${oldRateColor};">${user.old_rate}</span> <span style="color: #aaa;">&rarr;</span> <span style="color: ${newRateColor};">${user.rate}</span>${rateDiffStr}
                     </div>
                 `;
-                el.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
 
-                // 👑 配列(blinkUsers)に含まれているかで判定
+                let prev = previousIndex[user.id];
+                if (prev !== undefined && prev !== index) {
+                    wrapper.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
+                    if (index < prev) { 
+                        wrapper.style.zIndex = 10;
+                        content.classList.remove('pop-up');
+                        void content.offsetWidth;
+                        content.classList.add('pop-up');
+                        setTimeout(() => { wrapper.style.zIndex = 1; }, 400);
+                    } else { 
+                        wrapper.style.zIndex = 0;
+                        setTimeout(() => { wrapper.style.zIndex = 1; }, 400);
+                    }
+                } else {
+                    wrapper.style.transform = `translateY(${index * ROW_HEIGHT}px)`;
+                }
+                previousIndex[user.id] = index;
+
                 if (blinkUsers && blinkUsers.includes(user.id)) {
-                    el.classList.remove('blink'); void el.offsetWidth; el.classList.add('blink');
+                    content.classList.remove('blink'); void content.offsetWidth; content.classList.add('blink');
                 }
             });
             scoreList.style.height = `${standingsData.length * ROW_HEIGHT}px`;
@@ -329,7 +368,7 @@
                 let el = submissionElements[sub.id];
                 if (!el) {
                     el = document.createElement('div');
-                    el.className = 'row-item sub-row blink new-entry';
+                    el.className = 'sub-item sub-row blink new-entry';
                     el.id = `sub-${sub.id}`;
                     subList.appendChild(el);
                     submissionElements[sub.id] = el;
@@ -349,7 +388,6 @@
                 let resClass = 'wj';
                 const resText = sub.result.toUpperCase();
                 
-                // 👑 正規表現の処理を綺麗にリファクタリング
                 const match = resText.match(/(WA|TLE|RE|MLE|CE|OLE|IE|QLE)/);
                 if (resText === 'AC') {
                     resClass = 'ac';
