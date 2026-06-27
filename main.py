@@ -200,7 +200,7 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     if run_time < now:
         if dt < now:
             return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=70)
+        run_time = dt - datetime.timedelta(minutes=10) 
     if run_time < now:
         if dt < now:
             return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
