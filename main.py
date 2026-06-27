@@ -200,7 +200,37 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     if run_time < now:
         if dt < now:
             return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=2)
+        run_time = now + datetime.timedelta(minutes=70)
+    if run_time < now:
+        if dt < now:
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=50)
+    if run_time < now:
+        if dt < now:
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=30)
+    if run_time < now:
+        if dt < now:
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=15)
+    if run_time < now:
+        if dt < now:
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=8)
+    if run_time < now:
+        if dt < now:
+            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+        run_time = now + datetime.timedelta(minutes=3)
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
+
+    comment_text = f"💬 {comment}\n\n" if comment else ""
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
@@ -467,7 +497,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     while datetime.datetime.now(JST) < end_dt:
         try: 
             discord_ids = list(vcon_sessions.get(message_id, set()))
-            interval = 60 if is_ahc and duration_sec > 86400 else 0.01 
+            interval = 60 if is_ahc and duration_sec > 86400 else 0.7 
 
             ranking_data = []
             all_subs_data = []
@@ -487,7 +517,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 
                 subs = []
                 url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
-                await asyncio.sleep(0.001)
+                await asyncio.sleep(0.4)
                 try:
                     res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies, timeout=10)
                     soup = BeautifulSoup(res.text, 'html.parser')
