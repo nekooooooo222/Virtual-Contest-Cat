@@ -396,7 +396,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     import traceback 
     global last_ws_data 
     channel = bot.get_channel(channel_id)
-    if channel: await channel.send(f"🟢 **{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL:  https://virtual-contest-cat.onrender.com/{cid.upper()}\n")
+    if channel: await channel.send(f"**{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL:  https://virtual-contest-cat.onrender.com/{cid.upper()}\n")
 
     start_epoch = int(start_dt.timestamp())
     end_dt = start_dt + datetime.timedelta(seconds=duration_sec)
@@ -406,32 +406,51 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 
     is_ahc = cid.startswith("ahc")
 
-    try:
-        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
-        standings = s_res.json()
-        
-        tasks = []
-        task_names = {}
-        screen_to_assign = {}
-        for t in standings.get("TaskInfo", []):
-            assignment = t["Assignment"]
-            screen_name = t["TaskScreenName"]
-            tasks.append(assignment)
-            screen_to_assign[screen_name] = assignment
+    # 👑 【修正】順位表の取得にリトライ機能を持たせる（1回失敗しても諦めない）
+    standings = None
+    tasks = []
+    task_names = {}
+    screen_to_assign = {}
+    
+    for retry in range(5):
+        try:
+            s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
+            if s_res.status_code == 200:
+                standings = s_res.json()
+                for t in standings.get("TaskInfo", []):
+                    assignment = t["Assignment"]
+                    screen_name = t["TaskScreenName"]
+                    tasks.append(assignment)
+                    screen_to_assign[screen_name] = assignment
+                    task_names[assignment] = f"{assignment} - {t.get('TaskName', 'Problem ' + assignment)}"
+                break
+            else:
+                print(f"[{cid}] 順位表取得エラー: HTTP {s_res.status_code} - {s_res.text[:50]}")
+        except Exception as e:
+            print(f"[{cid}] 順位表取得例外: {e}")
+        await asyncio.sleep(5)
             
-            task_names[assignment] = f"{assignment} - {t.get('TaskName', 'Problem ' + assignment)}"
-    except Exception as e:
-        if channel: await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...(`{e}`)")
+    if not standings:
+        if channel: 
+            await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...")
         return
 
-    try:
-        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
-        results = r_res.json()
-    except:
-        results = []
-
+    # 👑 【修正】リザルトの取得にもリトライ機能を持たせる
     valid_perfs = []
+    valid_ranks = []
+    valid_p_values = []
     if not is_ahc:
+        results = []
+        for retry in range(3):
+            try:
+                r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
+                if r_res.status_code == 200:
+                    results = r_res.json()
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+            
         for r in results:
             p = r.get("Performance", 0)
             is_rated = r.get("IsRated", False)
@@ -439,9 +458,8 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
             if (p > 0 or is_rated) and rank is not None:
                 valid_perfs.append((rank, p))
         valid_perfs.sort(key=lambda x: x[0])
-    
-    valid_ranks = [x[0] for x in valid_perfs]
-    valid_p_values = [x[1] for x in valid_perfs]
+        valid_ranks = [x[0] for x in valid_perfs]
+        valid_p_values = [x[1] for x in valid_perfs]
 
     user_ratings = {}
     previous_scores = {} 
@@ -449,7 +467,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     while datetime.datetime.now(JST) < end_dt:
         try: 
             discord_ids = list(vcon_sessions.get(message_id, set()))
-            interval = 10 if is_ahc and duration_sec > 86400 else 0.1 
+            interval = 60 if is_ahc and duration_sec > 86400 else 0.01 
 
             ranking_data = []
             all_subs_data = []
@@ -458,7 +476,6 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                 user = users_data.get(d_id)
                 if not user: continue
                 
-                # 👑【修正】AHCの場合はヒューリスティック(AHC)用の履歴APIを叩く
                 if user not in user_ratings:
                     try:
                         contest_type_param = "?contestType=heuristic" if is_ahc else ""
@@ -643,7 +660,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
         except Exception as e:
             err_msg = traceback.format_exc()
             print(f"内部エラー発生: {err_msg}")
-            if channel: await channel.send(f"順位表の更新中にエラーが起きたにゃ！\n```py\n{e}\n```\n`10秒後に再試行するにゃ...`")
+            if channel: await channel.send(f"順位表の更新中にエラーが起きたにゃ！")
             await asyncio.sleep(10)
 
     final_data = {"type": "update", "status": "finished", "elapsed": duration_sec, "total": duration_sec, "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data}
@@ -674,16 +691,44 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
-    try:
-        s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
-        r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
-        standings = s_res.json()
-        results = r_res.json()
-    except Exception as e:
-        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ... (`{e}`)")
+    # 👑 【修正】終了処理の際もリトライ機能を適用
+    standings = None
+    tasks = []
+    screen_to_assign = {}
+    
+    for retry in range(5):
+        try:
+            s_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/standings/json", headers=headers, cookies=cookies, timeout=20)
+            if s_res.status_code == 200:
+                standings = s_res.json()
+                for t in standings.get("TaskInfo", []):
+                    tasks.append(t["Assignment"])
+                    screen_to_assign[t["TaskScreenName"]] = t["Assignment"]
+                break
+            else:
+                print(f"[{cid}] 終了集計_順位表取得エラー: HTTP {s_res.status_code}")
+        except Exception:
+            pass
+        await asyncio.sleep(5)
+        
+    if not standings:
+        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ...")
 
     valid_perfs = []
+    valid_ranks = []
+    valid_p_values = []
     if not is_ahc:
+        results = []
+        for retry in range(3):
+            try:
+                r_res = await asyncio.to_thread(requests.get, f"https://atcoder.jp/contests/{cid}/results/json", headers=headers, cookies=cookies, timeout=20)
+                if r_res.status_code == 200:
+                    results = r_res.json()
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+            
         for r in results:
             p = r.get("Performance", 0)
             is_rated = r.get("IsRated", False)
@@ -691,15 +736,8 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
             if (p > 0 or is_rated) and rank is not None:
                 valid_perfs.append((rank, p))
         valid_perfs.sort(key=lambda x: x[0])
-    
-    valid_ranks = [x[0] for x in valid_perfs]
-    valid_p_values = [x[1] for x in valid_perfs]
-
-    tasks = []
-    screen_to_assign = {}
-    for t in standings.get("TaskInfo", []):
-        tasks.append(t["Assignment"])
-        screen_to_assign[t["TaskScreenName"]] = t["Assignment"]
+        valid_ranks = [x[0] for x in valid_perfs]
+        valid_p_values = [x[1] for x in valid_perfs]
     
     ranking_data = []
     for d_id in discord_ids:
@@ -707,7 +745,6 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
         if not user: continue
         
         current_rating = 0
-        # 👑【修正】AHCの場合はヒューリスティック(AHC)用の履歴APIを叩く
         try:
             contest_type_param = "?contestType=heuristic" if is_ahc else ""
             history_url = f"https://atcoder.jp/users/{user}/history/json{contest_type_param}"
@@ -878,7 +915,7 @@ async def handle_root(request):
     html = """
     <html><body style="background:#1e1e1e; color:#fff; text-align:center; padding:50px; font-family:sans-serif;">
         <h2>コンテストIDが指定されていないにゃ！</h2>
-        <p>DiscordのBotが投稿したリンクからアクセスしてにゃ。<br>例: /ABC353</p>
+        <p>DiscordのBotが投稿したリンクからアクセスしてにゃ</p>
     </body></html>
     """
     return web.Response(text=html, content_type='text/html')
