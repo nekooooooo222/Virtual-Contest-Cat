@@ -3,3 +3,4 @@ requests==2.31.0
 APScheduler==3.10.4
 beautifulsoup4==4.12.3
 aiohttp==3.9.5
+lxml
