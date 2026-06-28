@@ -494,74 +494,92 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     user_ratings = {}
     previous_scores = {} 
     
-    while datetime.datetime.now(JST) < end_dt:
-        try: 
-            discord_ids = list(vcon_sessions.get(message_id, set()))
-            interval = 60 if is_ahc and duration_sec > 86400 else 0.7 
-
-            ranking_data = []
-            all_subs_data = []
-
-            for d_id in discord_ids:
-                user = users_data.get(d_id)
-                if not user: continue
+    # aiohttpのセッションをループの外で作る（これで通信が繋ぎっぱなしになり爆速になる）
+    import aiohttp
+    
+    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+        while datetime.datetime.now(JST) < end_dt:
+            try: 
+                discord_ids = list(vcon_sessions.get(message_id, set()))
+                interval = 60 if is_ahc and duration_sec > 86400 else 0.01 
+    
+                ranking_data = []
+                all_subs_data = []
                 
-                if user not in user_ratings:
+                # --- [追加] レートと提出を全員分「同時」に取得する関数 ---
+                async def fetch_user_data(user):
+                    # レート取得
+                    rate = user_ratings.get(user, 0)
+                    if user not in user_ratings:
+                        try:
+                            contest_type_param = "?contestType=heuristic" if is_ahc else ""
+                            async with session.get(f"https://atcoder.jp/users/{user}/history/json{contest_type_param}", timeout=10) as r:
+                                if r.status == 200:
+                                    history = await r.json()
+                                    rate = history[-1].get("NewRating", 0) if history else 0
+                                user_ratings[user] = rate
+                        except: pass
+                    
+                    # 提出一覧取得
+                    html_text = ""
+                    url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
                     try:
-                        contest_type_param = "?contestType=heuristic" if is_ahc else ""
-                        history_url = f"https://atcoder.jp/users/{user}/history/json{contest_type_param}"
-                        h_res = await asyncio.to_thread(requests.get, history_url, headers=headers, cookies=cookies, timeout=10)
-                        if h_res.status_code == 200 and h_res.json(): user_ratings[user] = h_res.json()[-1].get("NewRating", 0)
-                        else: user_ratings[user] = 0
-                    except: user_ratings[user] = 0
-
-                subs = []
-                url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
-                await asyncio.sleep(0.4)
-                try:
-                    res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies, timeout=10)
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    rows = soup.select('table tbody tr')
-                    if rows:
-                        for row in rows:
-                            cells = row.find_all('td')
-                            if len(cells) < 8: continue
-                            time_tag = cells[0].find('time')
-                            if not time_tag: continue
-                            sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
-                            
-                            if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
-                                task_link = cells[1].find('a')
-                                if task_link:
-                                    href = task_link.get('href', '')
-                                    screen_name = href.split('?')[0].strip('/').split('/')[-1]
-                                    task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
-                                else:
-                                    task_idx = 'A'
-
-                                score_text = cells[4].text.strip()
-                                score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
-                                result_label = cells[6].find('span')
-                                result = result_label.text.strip() if result_label else "WJ"
-                                sub_id = row.get('data-id') or str(sub_epoch) 
-                                
-                                sub_rate = user_ratings.get(user, 0)
-                                sub_dan = 1 if sub_rate <= 0 else (0 if sub_rate >= 2800 else (sub_rate % 400) // 100 + 1)
-
-                                subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score, "id": sub_id})
-                                all_subs_data.append({
-                                    "id": f"{user}_{sub_id}", "user": user, "user_rate": sub_rate,
-                                    "dan": sub_dan,
-                                    "prob": task_idx, "prob_title": task_names.get(task_idx, f"Problem {task_idx}"), 
-                                    "time": sub_epoch - start_epoch,
-                                    "point": score, "result": result, "epoch": sub_epoch
-                                })
-                except Exception as e:
-                    print(f"提出取得エラー: {e}")
-
-                subs.sort(key=lambda x: x["epoch_second"])
+                        async with session.get(url, timeout=10) as r:
+                            if r.status == 200:
+                                html_text = await r.text()
+                    except: pass
+                    
+                    return user, rate, html_text
                 
-                problem_status = {}
+                # 全員分のリクエストをよーいドン！で一斉送信
+                tasks = [fetch_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
+                results = await asyncio.gather(*tasks)
+                
+                # 取得したデータをパースして処理
+                for user, sub_rate, html_text in results:
+                    subs = []
+                    if html_text:
+                        # html.parser ではなく lxml に変更して爆速化
+                        soup = BeautifulSoup(html_text, 'lxml')
+                        rows = soup.select('table tbody tr')
+                        if rows:
+                            for row in rows:
+                                cells = row.find_all('td')
+                                if len(cells) < 8: continue
+                                time_tag = cells[0].find('time')
+                                if not time_tag: continue
+                                sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
+                                
+                                if start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp()):
+                                    task_link = cells[1].find('a')
+                                    if task_link:
+                                        href = task_link.get('href', '')
+                                        screen_name = href.split('?')[0].strip('/').split('/')[-1]
+                                        task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
+                                    else:
+                                        task_idx = 'A'
+    
+                                    score_text = cells[4].text.strip()
+                                    score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                                    result_label = cells[6].find('span')
+                                    result = result_label.text.strip() if result_label else "WJ"
+                                    sub_id = row.get('data-id') or str(sub_epoch) 
+                                    
+                                    sub_dan = 1 if sub_rate <= 0 else (0 if sub_rate >= 2800 else (sub_rate % 400) // 100 + 1)
+    
+                                    subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score, "id": sub_id})
+                                    all_subs_data.append({
+                                        "id": f"{user}_{sub_id}", "user": user, "user_rate": sub_rate,
+                                        "dan": sub_dan,
+                                        "prob": task_idx, "prob_title": task_names.get(task_idx, f"Problem {task_idx}"), 
+                                        "time": sub_epoch - start_epoch,
+                                        "point": score, "result": result, "epoch": sub_epoch
+                                    })
+    
+                    # ------ これ以降（subs.sort(key=lambda x: x["epoch_second"]) 以降の処理）は元のコードと同じ ------
+                    subs.sort(key=lambda x: x["epoch_second"])
+                    
+                    problem_status = {}
                 for sub in subs:
                     task_idx = sub["problem_id"]
                     if task_idx not in problem_status: 
