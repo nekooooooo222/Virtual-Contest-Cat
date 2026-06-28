@@ -11,6 +11,7 @@ import asyncio
 import math
 import io
 import bisect 
+import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from aiohttp import web
@@ -197,40 +198,12 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     now = datetime.datetime.now(JST)
     run_time = dt - datetime.timedelta(minutes=90) 
     
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = dt - datetime.timedelta(minutes=10) 
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=50)
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=30)
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=15)
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=8)
-    if run_time < now:
-        if dt < now:
-            return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
-        run_time = now + datetime.timedelta(minutes=3)
+    if dt < now:
+        return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
 
-    comment_text = f"💬 {comment}\n\n" if comment else ""
-
-    comment_text = f"💬 {comment}\n\n" if comment else ""
-
-    comment_text = f"💬 {comment}\n\n" if comment else ""
-
-    comment_text = f"💬 {comment}\n\n" if comment else ""
-
-    comment_text = f"💬 {comment}\n\n" if comment else ""
+    # 90分前を過ぎている場合は2分後に決定処理を走らせる
+    if run_time < now:
+        run_time = now + datetime.timedelta(minutes=2)
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
@@ -420,7 +393,7 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     scheduler.add_job(aggregate_vcontest, 'date', run_date=end_time, args=[channel_id, message_id, chosen_cid, start_dt, duration_sec])
 
 # ==========================================
-# 🟢 ライブ順位表 & WebSocket処理
+# 🟢 ライブ順位表 & WebSocket処理 (爆速版)
 # ==========================================
 async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_sec=6000):
     import traceback 
@@ -436,7 +409,6 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 
     is_ahc = cid.startswith("ahc")
 
-    # 👑 【修正】順位表の取得にリトライ機能を持たせる（1回失敗しても諦めない）
     standings = None
     tasks = []
     task_names = {}
@@ -465,7 +437,6 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
             await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...")
         return
 
-    # 👑 【修正】リザルトの取得にもリトライ機能を持たせる
     valid_perfs = []
     valid_ranks = []
     valid_p_values = []
@@ -477,8 +448,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                 if r_res.status_code == 200:
                     results = r_res.json()
                     break
-            except Exception:
-                pass
+            except Exception: pass
             await asyncio.sleep(3)
             
         for r in results:
@@ -494,21 +464,17 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     user_ratings = {}
     previous_scores = {} 
     
-    # aiohttpのセッションをループの外で作る（これで通信が繋ぎっぱなしになり爆速になる）
-    import aiohttp
-    
+    # 👑 aiohttpセッションを使用して通信とパースを爆速化
     async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
         while datetime.datetime.now(JST) < end_dt:
             try: 
                 discord_ids = list(vcon_sessions.get(message_id, set()))
-                interval = 60 if is_ahc and duration_sec > 86400 else 0.01 
+                interval = 60 if is_ahc and duration_sec > 86400 else 0.5 # リクエスト過多を避けるため少し待つ
     
                 ranking_data = []
                 all_subs_data = []
                 
-                # --- [追加] レートと提出を全員分「同時」に取得する関数 ---
                 async def fetch_user_data(user):
-                    # レート取得
                     rate = user_ratings.get(user, 0)
                     if user not in user_ratings:
                         try:
@@ -520,7 +486,6 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                                 user_ratings[user] = rate
                         except: pass
                     
-                    # 提出一覧取得
                     html_text = ""
                     url = f"https://atcoder.jp/contests/{cid}/submissions?f.User={user}"
                     try:
@@ -528,18 +493,15 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                             if r.status == 200:
                                 html_text = await r.text()
                     except: pass
-                    
                     return user, rate, html_text
                 
-                # 全員分のリクエストをよーいドン！で一斉送信
-                tasks = [fetch_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
-                results = await asyncio.gather(*tasks)
+                # 全員分のリクエストを一斉送信
+                tasks_req = [fetch_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
+                results_data = await asyncio.gather(*tasks_req)
                 
-                # 取得したデータをパースして処理
-                for user, sub_rate, html_text in results:
+                for user, sub_rate, html_text in results_data:
                     subs = []
                     if html_text:
-                        # html.parser ではなく lxml に変更して爆速化
                         soup = BeautifulSoup(html_text, 'lxml')
                         rows = soup.select('table tbody tr')
                         if rows:
@@ -576,140 +538,120 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                                         "point": score, "result": result, "epoch": sub_epoch
                                     })
     
-                    # ------ これ以降（subs.sort(key=lambda x: x["epoch_second"]) 以降の処理）は元のコードと同じ ------
                     subs.sort(key=lambda x: x["epoch_second"])
                     
                     problem_status = {}
-                for sub in subs:
-                    task_idx = sub["problem_id"]
-                    if task_idx not in problem_status: 
-                        problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0, 'temp_penalties': 0}
-                    
-                    p_data = problem_status[task_idx]
-                    elapsed_sec = sub["epoch_second"] - start_epoch
-                    point = sub.get("point", 0)
-                    
-                    if point > p_data['point']:
-                        p_data['point'] = point
-                        p_data['ac_time'] = elapsed_sec
-                        p_data['penalties'] = p_data['temp_penalties']
+                    for sub in subs:
+                        task_idx = sub["problem_id"]
+                        if task_idx not in problem_status: 
+                            problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0, 'temp_penalties': 0}
                         
-                    if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
-                        p_data['temp_penalties'] += 1
-
-                total_score = sum(p['point'] for p in problem_status.values())
-                last_ac_time = max([p['ac_time'] for p in problem_status.values() if p['point'] > 0], default=0)
-                total_penalties = sum(p['penalties'] for p in problem_status.values() if p['point'] > 0)
-                
-                if is_ahc:
-                    elapsed_penalty_sec = last_ac_time
-                else:
-                    elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
-                
-                v_rank = 1
-                current_elapsed_sec = int((datetime.datetime.now(JST) - start_dt).total_seconds())
-
-                if not is_ahc:
-                    for s in standings.get("StandingsData", []):
-                        s_score = 0
-                        s_last_ac_time = 0
-                        s_penalties = 0
+                        p_data = problem_status[task_idx]
+                        elapsed_sec = sub["epoch_second"] - start_epoch
+                        point = sub.get("point", 0)
                         
-                        for task_key, task_res in s.get("TaskResults", {}).items():
-                            task_elapsed = task_res.get("Elapsed", 0) / 1000000000
-                            task_score = task_res.get("Score", 0) / 100
+                        if point > p_data['point']:
+                            p_data['point'] = point
+                            p_data['ac_time'] = elapsed_sec
+                            p_data['penalties'] = p_data['temp_penalties']
+                            
+                        if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                            p_data['temp_penalties'] += 1
 
-                            if task_score > 0 and task_elapsed <= current_elapsed_sec:
-                                s_score += task_score
-                                if task_elapsed > s_last_ac_time:
-                                    s_last_ac_time = task_elapsed
-                                s_penalties += task_res.get("Penalty", 0)
-                                
-                        s_total_time = s_last_ac_time + (s_penalties * 300)
-
-                        if s_score > total_score: 
-                            v_rank += 1
-                        elif s_score == total_score and total_score > 0 and s_total_time < elapsed_penalty_sec: 
-                            v_rank += 1
+                    total_score = sum(p['point'] for p in problem_status.values())
+                    last_ac_time = max([p['ac_time'] for p in problem_status.values() if p['point'] > 0], default=0)
+                    total_penalties = sum(p['penalties'] for p in problem_status.values() if p['point'] > 0)
                     
-                perf = "-"
-                new_rate = user_ratings[user]
+                    if is_ahc: elapsed_penalty_sec = last_ac_time
+                    else: elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
+                    
+                    v_rank = 1
+                    current_elapsed_sec = int((datetime.datetime.now(JST) - start_dt).total_seconds())
 
-                if not is_ahc:
-                    if valid_ranks:
-                        idx = bisect.bisect_left(valid_ranks, v_rank)
-                        if idx == 0:
-                            perf = valid_p_values[0]
-                        elif idx == len(valid_ranks):
-                            perf = valid_p_values[-1]
-                        else:
-                            diff1 = v_rank - valid_ranks[idx - 1]
-                            diff2 = valid_ranks[idx] - v_rank
-                            if diff1 <= diff2:
-                                perf = valid_p_values[idx - 1]
+                    if not is_ahc:
+                        for s in standings.get("StandingsData", []):
+                            s_score = 0
+                            s_last_ac_time = 0
+                            s_penalties = 0
+                            for task_key, task_res in s.get("TaskResults", {}).items():
+                                task_elapsed = task_res.get("Elapsed", 0) / 1000000000
+                                task_score = task_res.get("Score", 0) / 100
+                                if task_score > 0 and task_elapsed <= current_elapsed_sec:
+                                    s_score += task_score
+                                    if task_elapsed > s_last_ac_time: s_last_ac_time = task_elapsed
+                                    s_penalties += task_res.get("Penalty", 0)
+                            s_total_time = s_last_ac_time + (s_penalties * 300)
+
+                            if s_score > total_score: v_rank += 1
+                            elif s_score == total_score and total_score > 0 and s_total_time < elapsed_penalty_sec: v_rank += 1
+                        
+                    perf = "-"
+                    new_rate = user_ratings[user]
+
+                    if not is_ahc:
+                        if valid_ranks:
+                            idx = bisect.bisect_left(valid_ranks, v_rank)
+                            if idx == 0: perf = valid_p_values[0]
+                            elif idx == len(valid_ranks): perf = valid_p_values[-1]
                             else:
-                                perf = valid_p_values[idx]
+                                diff1 = v_rank - valid_ranks[idx - 1]
+                                diff2 = valid_ranks[idx] - v_rank
+                                if diff1 <= diff2: perf = valid_p_values[idx - 1]
+                                else: perf = valid_p_values[idx]
+                        try:
+                            if perf != "-" and user_ratings[user] > 0:
+                                perf_int = int(perf)
+                                x_old = 2.0 ** (user_ratings[user] / 400.0)
+                                x_perf = 2.0 ** (perf_int / 400.0)
+                                x_new = x_old * 0.9 + x_perf * 0.1
+                                new_rate = int(round(400.0 * math.log2(x_new)))
+                        except: pass
 
-                    try:
-                        if perf != "-" and user_ratings[user] > 0:
-                            perf_int = int(perf)
-                            x_old = 2.0 ** (user_ratings[user] / 400.0)
-                            x_perf = 2.0 ** (perf_int / 400.0)
-                            x_new = x_old * 0.9 + x_perf * 0.1
-                            new_rate = int(round(400.0 * math.log2(x_new)))
-                    except:
-                        pass
+                    display_name = user 
+                    ranking_data.append({
+                        "id": user, "display": display_name, "score": int(total_score), "time": elapsed_penalty_sec,
+                        "v_rank": v_rank, "perf": perf, "old_rate": user_ratings[user], "rate": new_rate, 
+                        "status": problem_status, "penalties": total_penalties
+                    })
 
-                display_name = user 
+                all_subs_data.sort(key=lambda x: x["epoch"])
+                ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
 
-                ranking_data.append({
-                    "id": user, "display": display_name, "score": int(total_score), "time": elapsed_penalty_sec,
-                    "v_rank": v_rank, "perf": perf, "old_rate": user_ratings[user], "rate": new_rate, 
-                    "status": problem_status, "penalties": total_penalties
-                })
+                if is_ahc:
+                    for idx, rd in enumerate(ranking_data): rd["v_rank"] = idx + 1
 
-
-            all_subs_data.sort(key=lambda x: x["epoch"])
-            
-            ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
-
-            if is_ahc:
-                for idx, rd in enumerate(ranking_data):
-                    rd["v_rank"] = idx + 1
-
-            blink_users = []
-            for data in ranking_data:
-                user_id = data["id"]
-                score = data["score"]
-                if user_id in previous_scores and previous_scores[user_id] < score:
-                    blink_users.append(user_id)
-                previous_scores[user_id] = score
-            
-            now_dt = datetime.datetime.now(JST)
-            elapsed_sec = int((now_dt - start_dt).total_seconds())
-            ws_data = {
-                "type": "update", "status": "running", "elapsed": elapsed_sec, "total": duration_sec,
-                "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, 
-                "blink_users": blink_users 
-            }
-            
-            last_ws_data[cid] = ws_data 
-            if len(last_ws_data) > 10:
-                oldest_cid = next(iter(last_ws_data))
-                del last_ws_data[oldest_cid]
-            
-            if cid in connected_clients:
-                for ws in list(connected_clients[cid]):
-                    try: await ws.send_json(ws_data)
-                    except Exception: connected_clients[cid].remove(ws)
-            
-            await asyncio.sleep(interval)
-            
-        except Exception as e:
-            err_msg = traceback.format_exc()
-            print(f"内部エラー発生: {err_msg}")
-            if channel: await channel.send(f"順位表の更新中にエラーが起きたにゃ！")
-            await asyncio.sleep(10)
+                blink_users = []
+                for data in ranking_data:
+                    user_id = data["id"]
+                    score = data["score"]
+                    if user_id in previous_scores and previous_scores[user_id] < score: blink_users.append(user_id)
+                    previous_scores[user_id] = score
+                
+                now_dt = datetime.datetime.now(JST)
+                elapsed_sec = int((now_dt - start_dt).total_seconds())
+                ws_data = {
+                    "type": "update", "status": "running", "elapsed": elapsed_sec, "total": duration_sec,
+                    "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data, 
+                    "blink_users": blink_users 
+                }
+                
+                last_ws_data[cid] = ws_data 
+                if len(last_ws_data) > 10:
+                    oldest_cid = next(iter(last_ws_data))
+                    del last_ws_data[oldest_cid]
+                
+                if cid in connected_clients:
+                    for ws in list(connected_clients[cid]):
+                        try: await ws.send_json(ws_data)
+                        except Exception: connected_clients[cid].remove(ws)
+                
+                await asyncio.sleep(interval)
+                
+            except Exception as e:
+                err_msg = traceback.format_exc()
+                print(f"内部エラー発生: {err_msg}")
+                if channel: await channel.send(f"順位表の更新中にエラーが起きたにゃ！")
+                await asyncio.sleep(10)
 
     final_data = {"type": "update", "status": "finished", "elapsed": duration_sec, "total": duration_sec, "tasks": tasks, "standings": ranking_data, "submissions": all_subs_data}
     last_ws_data[cid] = final_data 
@@ -722,8 +664,9 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
             try: await ws.send_json(final_data)
             except: pass
 
+
 # ==========================================
-# 🏁 最終結果：自動集計・パフォ＆レート計算
+# 🏁 最終結果：自動集計・パフォ＆レート計算 (爆速版)
 # ==========================================
 async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec=6000):
     channel = bot.get_channel(channel_id)
@@ -739,7 +682,6 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
-    # 👑 【修正】終了処理の際もリトライ機能を適用
     standings = None
     tasks = []
     screen_to_assign = {}
@@ -753,14 +695,11 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
                     tasks.append(t["Assignment"])
                     screen_to_assign[t["TaskScreenName"]] = t["Assignment"]
                 break
-            else:
-                print(f"[{cid}] 終了集計_順位表取得エラー: HTTP {s_res.status_code}")
-        except Exception:
-            pass
+            else: print(f"[{cid}] 終了集計_順位表取得エラー: HTTP {s_res.status_code}")
+        except Exception: pass
         await asyncio.sleep(5)
         
-    if not standings:
-        return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ...")
+    if not standings: return await channel.send(f"本番データの取得に失敗してパフォが計算できないにゃ...")
 
     valid_perfs = []
     valid_ranks = []
@@ -773,8 +712,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
                 if r_res.status_code == 200:
                     results = r_res.json()
                     break
-            except Exception:
-                pass
+            except Exception: pass
             await asyncio.sleep(3)
             
         for r in results:
@@ -788,125 +726,128 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
         valid_p_values = [x[1] for x in valid_perfs]
     
     ranking_data = []
-    for d_id in discord_ids:
-        user = users_data.get(d_id)
-        if not user: continue
-        
-        current_rating = 0
-        try:
-            contest_type_param = "?contestType=heuristic" if is_ahc else ""
-            history_url = f"https://atcoder.jp/users/{user}/history/json{contest_type_param}"
-            await asyncio.sleep(1.0)
-            h_res = await asyncio.to_thread(requests.get, history_url, headers=headers, cookies=cookies, timeout=10)
-            if h_res.status_code == 200 and h_res.json():
-                current_rating = h_res.json()[-1].get("NewRating", 0)
-        except: pass
 
-        subs = []
-        for page in range(1, 4):
-            url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
-            await asyncio.sleep(0.75)
-            res = await asyncio.to_thread(requests.get, url, headers=headers, cookies=cookies)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            rows = soup.select('table tbody tr')
-            if not rows: break
+    # 👑 終了処理も aiohttp と lxml で爆速取得
+    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+        async def fetch_final_user_data(user):
+            current_rating = 0
+            try:
+                contest_type_param = "?contestType=heuristic" if is_ahc else ""
+                async with session.get(f"https://atcoder.jp/users/{user}/history/json{contest_type_param}", timeout=10) as r:
+                    if r.status == 200:
+                        history = await r.json()
+                        current_rating = history[-1].get("NewRating", 0) if history else 0
+            except: pass
 
-            for row in rows:
-                cells = row.find_all('td')
-                if len(cells) < 8: continue
-                time_tag = cells[0].find('time')
-                if not time_tag: continue
-
+            pages_html = []
+            for page in range(1, 4): # 最大3ページ取得
                 try:
-                    sub_dt = datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
-                    sub_epoch = int(sub_dt.timestamp())
-                except: continue
+                    url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
+                    async with session.get(url, timeout=10) as r:
+                        if r.status == 200:
+                            pages_html.append(await r.text())
+                        else: break
+                except: break
+            return user, current_rating, pages_html
 
-                if start_epoch <= sub_epoch <= end_epoch:
-                    task_link = cells[1].find('a')
-                    if task_link:
-                        href = task_link.get('href', '')
-                        screen_name = href.split('?')[0].strip('/').split('/')[-1]
-                        task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
+        tasks_req = [fetch_final_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
+        final_results = await asyncio.gather(*tasks_req)
+
+        for user, current_rating, pages_html in final_results:
+            subs = []
+            for html_text in pages_html:
+                soup = BeautifulSoup(html_text, 'lxml')
+                rows = soup.select('table tbody tr')
+                if not rows: break
+
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) < 8: continue
+                    time_tag = cells[0].find('time')
+                    if not time_tag: continue
+
+                    try:
+                        sub_dt = datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
+                        sub_epoch = int(sub_dt.timestamp())
+                    except: continue
+
+                    if start_epoch <= sub_epoch <= end_epoch:
+                        task_link = cells[1].find('a')
+                        if task_link:
+                            href = task_link.get('href', '')
+                            screen_name = href.split('?')[0].strip('/').split('/')[-1]
+                            task_idx = screen_to_assign.get(screen_name, screen_name.split('_')[-1].upper())
+                        else:
+                            task_idx = 'A'
+                            
+                        score_text = cells[4].text.strip()
+                        score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                        result_label = cells[6].find('span')
+                        result = result_label.text.strip() if result_label else "WJ"
+
+                        subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score})
+                if len(rows) < 20: break 
+
+            subs.sort(key=lambda x: x["epoch_second"])
+            
+            problem_status = {}
+            for sub in subs:
+                task_idx = sub["problem_id"]
+                if task_idx not in problem_status: 
+                    problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0, 'temp_penalties': 0}
+                
+                p_data = problem_status[task_idx]
+                elapsed_sec = sub["epoch_second"] - start_epoch
+                point = sub.get("point", 0)
+                
+                if point > p_data['point']:
+                    p_data['point'] = point
+                    p_data['ac_time'] = elapsed_sec
+                    p_data['penalties'] = p_data['temp_penalties']
+                
+                if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                    p_data['temp_penalties'] += 1
+
+            total_score = sum(p['point'] for p in problem_status.values())
+            last_ac_time = max([p['ac_time'] for p in problem_status.values() if p['point'] > 0], default=0)
+            total_penalties = sum(p['penalties'] for p in problem_status.values() if p['point'] > 0)
+            
+            if is_ahc: elapsed_penalty_sec = last_ac_time
+            else: elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
+            
+            v_rank = 1
+            if not is_ahc:
+                for s in standings["StandingsData"]:
+                    s_score = s["TotalResult"]["Score"] / 100
+                    s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
+                    if s_score > total_score: v_rank += 1
+                    elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
+                
+            perf = "-"
+            if not is_ahc:
+                if valid_ranks:
+                    idx = bisect.bisect_left(valid_ranks, v_rank)
+                    if idx == 0: perf = valid_p_values[0]
+                    elif idx == len(valid_ranks): perf = valid_p_values[-1]
                     else:
-                        task_idx = 'A'
-                        
-                    score_text = cells[4].text.strip()
-                    score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
-                    result_label = cells[6].find('span')
-                    result = result_label.text.strip() if result_label else "WJ"
+                        diff1 = v_rank - valid_ranks[idx - 1]
+                        diff2 = valid_ranks[idx] - v_rank
+                        if diff1 <= diff2: perf = valid_p_values[idx - 1]
+                        else: perf = valid_p_values[idx]
 
-                    subs.append({"epoch_second": sub_epoch, "problem_id": task_idx, "result": result, "point": score})
-            if len(rows) < 20: break 
-
-        subs.sort(key=lambda x: x["epoch_second"])
-        
-        problem_status = {}
-        for sub in subs:
-            task_idx = sub["problem_id"]
-            if task_idx not in problem_status: 
-                problem_status[task_idx] = {'ac_time': -1, 'penalties': 0, 'point': 0, 'temp_penalties': 0}
-            
-            p_data = problem_status[task_idx]
-            elapsed_sec = sub["epoch_second"] - start_epoch
-            point = sub.get("point", 0)
-            
-            if point > p_data['point']:
-                p_data['point'] = point
-                p_data['ac_time'] = elapsed_sec
-                p_data['penalties'] = p_data['temp_penalties']
-            
-            if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
-                p_data['temp_penalties'] += 1
-
-        total_score = sum(p['point'] for p in problem_status.values())
-        last_ac_time = max([p['ac_time'] for p in problem_status.values() if p['point'] > 0], default=0)
-        total_penalties = sum(p['penalties'] for p in problem_status.values() if p['point'] > 0)
-        
-        if is_ahc:
-            elapsed_penalty_sec = last_ac_time
-        else:
-            elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
-        
-        v_rank = 1
-        if not is_ahc:
-            for s in standings["StandingsData"]:
-                s_score = s["TotalResult"]["Score"] / 100
-                s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
-                if s_score > total_score: v_rank += 1
-                elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
-            
-        perf = "-"
-        if not is_ahc:
-            if valid_ranks:
-                idx = bisect.bisect_left(valid_ranks, v_rank)
-                if idx == 0:
-                    perf = valid_p_values[0]
-                elif idx == len(valid_ranks):
-                    perf = valid_p_values[-1]
-                else:
-                    diff1 = v_rank - valid_ranks[idx - 1]
-                    diff2 = valid_ranks[idx] - v_rank
-                    if diff1 <= diff2:
-                        perf = valid_p_values[idx - 1]
-                    else:
-                        perf = valid_p_values[idx]
-
-        display_name = user
-
-        ranking_data.append({
-            "user": user, "display": display_name,
-            "score": int(total_score), "time": elapsed_penalty_sec,
-            "rank": v_rank, "perf": perf,
-            "current_rating": current_rating,
-            "status": problem_status, "penalties": total_penalties
-        })
+            display_name = user
+            ranking_data.append({
+                "user": user, "display": display_name,
+                "score": int(total_score), "time": elapsed_penalty_sec,
+                "rank": v_rank, "perf": perf,
+                "current_rating": current_rating,
+                "status": problem_status, "penalties": total_penalties
+            })
 
     ranking_data.sort(key=lambda x: (-x["score"], x["time"]))
 
     if is_ahc:
-        for idx, rd in enumerate(ranking_data):
-            rd["rank"] = idx + 1
+        for idx, rd in enumerate(ranking_data): rd["rank"] = idx + 1
 
     msg_lines = [f" **{cid.upper()} バチャコン 最終結果** \n*(※綺麗な順位表の画像はWeb版の 📥 ボタンから保存して共有できるにゃ！)*"]
     for i, data in enumerate(ranking_data):
