@@ -16,6 +16,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from aiohttp import web
 
+@bot.event
+async def setup_hook():
+    # cogsフォルダ内の.pyファイルをすべて読み込む
+    for filename in os.listdir("./cogs"):
+        if filename.endswith(".py"):
+            await bot.load_extension(f"cogs.{filename[:-3]}")
+    # スラッシュコマンドをDiscordに同期
+    await bot.tree.sync()
+
 # ==========================================
 # 設定とデータベース
 # ==========================================
