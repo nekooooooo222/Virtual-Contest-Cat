@@ -16,15 +16,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from aiohttp import web
 
-@bot.event
-async def setup_hook():
-    # cogsフォルダ内の.pyファイルをすべて読み込む
-    for filename in os.listdir("./cogs"):
-        if filename.endswith(".py"):
-            await bot.load_extension(f"cogs.{filename[:-3]}")
-    # スラッシュコマンドをDiscordに同期
-    await bot.tree.sync()
-
 # ==========================================
 # 設定とデータベース
 # ==========================================
@@ -169,8 +160,27 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ==========================================
+# ⬇️ こう書き換える（合体版） ⬇️
+# ==========================================
 async def setup_hook():
+    # ① 既存のボタンUIの登録処理
     bot.add_view(VconJoinView())
+
+    # ② 追加：cogsフォルダ内のファイルを読み込む
+    if os.path.exists("./cogs"):
+        for filename in os.listdir("./cogs"):
+            if filename.endswith(".py"):
+                try:
+                    await bot.load_extension(f"cogs.{filename[:-3]}")
+                    print(f"✅ Cog読み込み成功: {filename}")
+                except Exception as e:
+                    print(f"❌ Cog読み込み失敗 ({filename}): {e}")
+    
+    # ③ 追加：スラッシュコマンドをDiscordに同期
+    await bot.tree.sync()
+    print("✅ スラッシュコマンドの同期完了")
+
 bot.setup_hook = setup_hook
 
 @bot.event
