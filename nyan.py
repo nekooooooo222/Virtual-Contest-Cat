@@ -7,7 +7,7 @@ def test_atcoder_connection():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
-    print("1.ログイン状態の確認（/settings にアクセスします）...")
+    print("1.ログイン状態の確認")
     try:        res_settings = requests.get("https://atcoder.jp/settings", headers=headers, cookies=cookies, timeout=10, allow_redirects=False)
         
         if res_settings.status_code == 403:
@@ -30,7 +30,7 @@ def test_atcoder_connection():
         print(f"通信エラー: {e}\n")
         return
 
-    print("順位表APIの取得テスト...")
+    print("順位表APIの取得テスト")
     try:
         res_json = requests.get("https://atcoder.jp/contests/abc292/standings/json", headers=headers, cookies=cookies, timeout=10)
         
