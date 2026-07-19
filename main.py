@@ -108,7 +108,7 @@ async def save_data_to_channel(bot):
     json_str = json.dumps(data, indent=2, ensure_ascii=False)
     
     file = discord.File(io.BytesIO(json_str.encode('utf-8')), filename="data.json")
-    content_text = "📁 データ保存用（2000文字制限回避のためファイル化）"
+    content_text = "なんと、データ保存用ファイル"
 
     if data_message_id:
         try:
@@ -160,14 +160,12 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ==========================================
-# ⬇️ こう書き換える（合体版） ⬇️
-# ==========================================
+#色付けBOTを読み込んであげる
 async def setup_hook():
-    # ① 既存のボタンUIの登録処理
+    # 既存のボタンUIの登録処理
     bot.add_view(VconJoinView())
 
-    # ② 追加：cogsフォルダ内のファイルを読み込む
+    # cogsフォルダ内のファイルを読み込む
     if os.path.exists("./cogs"):
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py"):
@@ -177,7 +175,7 @@ async def setup_hook():
                 except Exception as e:
                     print(f"❌ Cog読み込み失敗 ({filename}): {e}")
     
-    # ③ 追加：スラッシュコマンドをDiscordに同期
+    # スラッシュコマンドをDiscordに同期
     await bot.tree.sync()
     print("✅ スラッシュコマンドの同期完了")
 
@@ -185,7 +183,7 @@ bot.setup_hook = setup_hook
 
 @bot.event
 async def on_ready():
-    print(f'ログインしましたにゃ: {bot.user.name}')
+    print(f'ログインしたにゃ: {bot.user.name}')
     await load_data_from_channel(bot)
     if not scheduler.running: scheduler.start()
     await bot.tree.sync()
@@ -214,15 +212,45 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     except ValueError:
         return await interaction.response.send_message("日時のフォーマットが違うにゃ！ `2026-06-18 21:00` のように入力してにゃ", ephemeral=True)
     
-    now = datetime.datetime.now(JST)
-    run_time = dt - datetime.timedelta(minutes=90) 
-    
-    if dt < now:
-        return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
 
-    # 90分前を過ぎている場合は2分後に決定処理を走らせる
+
+now = datetime.datetime.now(JST)
+# 過去なら爆破
+if dt < now:
+    return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+
+# 現在から開始時刻（dt）までの残り猶予（分）を計算
+time_left = (dt - now).total_seconds() / 60.0
+
+if time_left >= 75:
+    # 猶予75分以上:
+    run_time_90 = dt - datetime.timedelta(minutes=90)
+    run_time_60_from_now = now + datetime.timedelta(minutes=60)
+    
+    # どちらか未来の方（遅い方）を採用
+    run_time = max(run_time_90, run_time_60_from_now)
+    
+    # ※もし「常に開始15分前」に固定したい場合は、これらを消して以下1行にしてください
+    # run_time = dt - datetime.timedelta(minutes=15)
+
+elif 30 <= time_left < 75:
+    # 猶予30分以上～75分未満:
+    # 開始時刻猶予（15分）を死守し、決定処理猶予（60分）の方を削る
+    run_time = dt - datetime.timedelta(minutes=15)
+
+elif 4 <= time_left < 30:
+    # 猶予4分以上～30分未満:
+    # 開始時刻猶予と決定処理猶予を半分ずつ割り当てる
+    run_time = now + datetime.timedelta(minutes=time_left / 2)
+
+else:
+    # ④ 猶予4分未満:
+    # 開始時刻の1分前に決定処理を行う
+    run_time = dt - datetime.timedelta(minutes=1)
+    
+    # 猶予が1分未満（例えば30秒後）で、すでに「1分前」が過去になってしまう場合のフェイルセーフ
     if run_time < now:
-        run_time = now + datetime.timedelta(minutes=2)
+        run_time = now
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
@@ -412,7 +440,7 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     scheduler.add_job(aggregate_vcontest, 'date', run_date=end_time, args=[channel_id, message_id, chosen_cid, start_dt, duration_sec])
 
 # ==========================================
-# 🟢 ライブ順位表 & WebSocket処理 (爆速版)
+# ライブ順位表 & WebSocket処理
 # ==========================================
 async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_sec=6000):
     import traceback 
@@ -453,7 +481,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
             
     if not standings:
         if channel: 
-            await channel.send(f"⚠️ 順位表の初期化に失敗したにゃ...")
+            await channel.send(f"順位表の初期化に失敗したにゃ...")
         return
 
     valid_perfs = []
@@ -483,12 +511,11 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     user_ratings = {}
     previous_scores = {} 
     
-    # 👑 aiohttpセッションを使用して通信とパースを爆速化
     async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
         while datetime.datetime.now(JST) < end_dt:
             try: 
                 discord_ids = list(vcon_sessions.get(message_id, set()))
-                interval = 60 if is_ahc and duration_sec > 86400 else 0.5 # リクエスト過多を避けるため少し待つ
+                interval = 60 if is_ahc and duration_sec > 86400 else 0.5 # リクエストのインターバル、長期AHCなら長めに取る
     
                 ranking_data = []
                 all_subs_data = []
@@ -685,7 +712,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
 
 
 # ==========================================
-# 🏁 最終結果：自動集計・パフォ＆レート計算 (爆速版)
+#  最終結果：自動集計・パフォ＆レート計算
 # ==========================================
 async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec=6000):
     channel = bot.get_channel(channel_id)
@@ -746,7 +773,6 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     
     ranking_data = []
 
-    # 👑 終了処理も aiohttp と lxml で爆速取得
     async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
         async def fetch_final_user_data(user):
             current_rating = 0
@@ -759,7 +785,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
             except: pass
 
             pages_html = []
-            for page in range(1, 4): # 最大3ページ取得
+            for page in range(1, 4):
                 try:
                     url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
                     async with session.get(url, timeout=10) as r:
@@ -917,7 +943,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
         await save_data_to_channel(bot)
 
 # ==========================================
-# 🌐 Web & WebSocket サーバー (aiohttp)
+#  Web & WebSocket サーバー 
 # ==========================================
 async def handle_root(request):
     html = """
@@ -959,7 +985,7 @@ async def websocket_handler(request):
     finally:
         if ws in connected_clients.get(contest_id, set()):
             connected_clients[contest_id].remove(ws)
-        print(f"Web画面が閉じたにゃ... ({contest_id.upper()})")
+        print(f"Web画面が閉じたにゃ ({contest_id.upper()})")
     return ws
 
 async def web_server_runner():
