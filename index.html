@@ -205,7 +205,6 @@
 
         const ROW_HEIGHT = 34; 
         
-        // 👑 【修正】AHCの時などに送られてくる「-」の場合に真っ赤になるバグを修正
         const getRatingColor = rate => {
             if (rate === "-" || rate === undefined || rate === null) return '#ffffff';
             return rate < 400 ? '#999999' : rate < 800 ? '#cc7000' : rate < 1200 ? '#00cc00' : rate < 1600 ? '#00cccc' : rate < 2000 ? '#4444ff' : rate < 2400 ? '#cccc00' : rate < 2800 ? '#ff9900' : '#ff0000';
