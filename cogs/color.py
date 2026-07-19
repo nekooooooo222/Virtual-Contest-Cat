@@ -14,9 +14,9 @@ class ColorCog(commands.Cog):
     # ---------------------------------------------------------
     @app_commands.command(
         name="color_set",
-        description="名前の色をHEXコード（例: #00ffff）で自由に変更します",
+        description="名前の色をHEXコード（例: #00ffff）で自由に変更するにゃ！",
     )
-    @app_commands.describe(hex_code="設定したい色のHEXコード（例: #FF0000 や #00FFFF）")
+    @app_commands.describe(hex_code="設定したい色のHEXコード（例: #FF0000 や #00FFFF）を指定するにゃ")
     async def color_set(self, interaction: discord.Interaction, hex_code: str):
         # 1. カラーコードのバリデーション（チェック）
         try:
@@ -25,7 +25,7 @@ class ColorCog(commands.Cog):
             color_value = discord.Color(int(clean_hex, 16))
         except ValueError:
             await interaction.response.send_message(
-                "❌ 正しいカラーコードを入力してください。（例: #FF0000）",
+                "❌ 正しいカラーコードを入力するにゃ～。（例: #FF0000）",
                 ephemeral=True,
             )
             return
@@ -45,13 +45,13 @@ class ColorCog(commands.Cog):
             if role:
                 # 既存のロールがあれば、色だけ更新
                 await role.edit(color=color_value)
-                message = f"🎨 名前の色を `{hex_code}` に更新しました！"
+                message = f"🎨 名前の色を `{hex_code}` に更新したにゃ！"
             else:
                 # なければ新しく作る
                 role = await guild.create_role(name=role_name, color=color_value)
                 # ユーザーに付与
                 await member.add_roles(role)
-                message = f"✨ 新しいカラーロールを作成し、名前の色を `{hex_code}` に設定しました！"
+                message = f"🎨 名前の色を `{hex_code}` に更新したにゃ！"
 
             # 💡【重要】作ったロールをBot自身のロールのすぐ下に移動させる（ヒエラルキー対策）
             # これをやらないと、他の通常ロールに色が負けることがあります
@@ -63,12 +63,12 @@ class ColorCog(commands.Cog):
 
         except discord.Forbidden:
             await interaction.followup.send(
-                "❌ 権限が足りません。Botのロールをサーバー設定で一番上に移動させてください。",
+                "❌ 権限が足りないにゃ。Botのロールをサーバー設定で一番上に移動するにゃ。",
                 ephemeral=True,
             )
         except Exception as e:
             await interaction.followup.send(
-                f"❌ エラーが発生しました: {e}", ephemeral=True
+                f"❌ エラーが発生したにゃ: {e}", ephemeral=True
             )
 
     # ---------------------------------------------------------
