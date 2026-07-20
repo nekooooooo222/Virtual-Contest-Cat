@@ -472,7 +472,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     start_epoch = int(start_dt.timestamp())
     end_dt = start_dt + datetime.timedelta(seconds=duration_sec)
     
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
     is_ahc = cid.startswith("ahc")
@@ -746,7 +746,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     end_epoch = start_epoch + duration_sec
     is_ahc = cid.startswith("ahc")
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'}
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
     standings = None
