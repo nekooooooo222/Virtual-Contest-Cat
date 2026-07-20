@@ -249,8 +249,6 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
         # 猶予が1分未満（例えば30秒後）で、すでに「1分前」が過去になってしまう場合のフェイルセーフ
         if run_time < now:
             run_time = now
-    # どちらか未来の方（遅い方）を採用
-    run_time = max(run_time_90, run_time_60_from_now)
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
