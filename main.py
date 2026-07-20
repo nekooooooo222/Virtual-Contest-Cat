@@ -235,7 +235,7 @@ elif 30 <= time_left < 75:
     # 決定処理猶予（60分）の方を削る
     run_time = dt - datetime.timedelta(minutes=15)
 
-elif 4 <= time_left < 30:
+elif 3 <= time_left < 30:
     # 猶予4分以上～30分未満:
     # 開始時刻猶予と決定処理猶予を半分ずつ割り当てる
     run_time = now + datetime.timedelta(minutes=time_left / 2)
