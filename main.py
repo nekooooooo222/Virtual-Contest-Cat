@@ -211,8 +211,6 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
         dt = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M").replace(tzinfo=JST)
     except ValueError:
         return await interaction.response.send_message("日時のフォーマットが違うにゃ！ `2026-06-18 21:00` のように入力してにゃ", ephemeral=True)
-    
-
 
     now = datetime.datetime.now(JST)
     # 過去なら爆破
@@ -340,20 +338,26 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
         for i, user in enumerate(atcoder_ids):
             await status_msg.edit(content=f"**コンテストの決定処理を開始するにゃ！**\n`データ取得中にゃ... ({i+1}/{len(atcoder_ids)}人完了)`")
             user_ac_data[user] = {}
+            from_second = 0
             try:
-                url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}"
-                await asyncio.sleep(1.0) 
-                subs = (await asyncio.to_thread(requests.get, url)).json()
-                
-                for sub in subs:
-                    if sub["contest_id"] in target_contests:
-                        prob_idx = sub["problem_id"].split("_")[-1]
-                        if ctype in ["ahc_short", "ahc_long"]:
-                            user_ac_data[user].setdefault(sub["contest_id"], {})[prob_idx] = max(
+                while True:
+                    url = f"https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user={user}&from_second={from_second}"
+                    await asyncio.sleep(1.0) 
+                    subs = (await asyncio.to_thread(requests.get, url)).json()
+                    if not subs:
+                        break
+                    for sub in subs:
+                        if sub["contest_id"] in target_contests:
+                            prob_idx = sub["problem_id"].split("_")[-1]
+                            if ctype in ["ahc_short", "ahc_long"]:
+                                user_ac_data[user].setdefault(sub["contest_id"], {})[prob_idx] = max(
                                 sub["point"], user_ac_data[user][sub["contest_id"]].get(prob_idx, 0)
-                            )
-                        elif sub["result"] == "AC":
-                            user_ac_data[user].setdefault(sub["contest_id"], {})[prob_idx] = sub["point"]
+                                )
+                            elif sub["result"] == "AC":
+                                user_ac_data[user].setdefault(sub["contest_id"], {})[prob_idx] = sub["point"]
+                    if len(subs) < 500:
+                        break
+                    from_second = subs[-1]["epoch_second"] + 1
             except: pass
 
         await status_msg.edit(content=f" `全員のデータを取得したにゃ！最適な回を計算中にゃ～`")
