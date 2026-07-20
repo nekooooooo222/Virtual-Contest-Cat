@@ -8,7 +8,8 @@ def test_atcoder_connection():
     cookies = {'REVEL_SESSION': REVEL_SESSION} if REVEL_SESSION else {}
 
     print("1.ログイン状態の確認")
-    try:        res_settings = requests.get("https://atcoder.jp/settings", headers=headers, cookies=cookies, timeout=10, allow_redirects=False)
+    try:
+        res_settings = requests.get("https://atcoder.jp/settings", headers=headers, cookies=cookies, timeout=10, allow_redirects=False)
         
         if res_settings.status_code == 403:
             print(" HTTP 403 拒否")
