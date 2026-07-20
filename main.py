@@ -229,13 +229,10 @@ if time_left >= 75:
     
     # どちらか未来の方（遅い方）を採用
     run_time = max(run_time_90, run_time_60_from_now)
-    
-    # ※もし「常に開始15分前」に固定したい場合は、これらを消して以下1行にしてください
-    # run_time = dt - datetime.timedelta(minutes=15)
 
 elif 30 <= time_left < 75:
     # 猶予30分以上～75分未満:
-    # 開始時刻猶予（15分）を死守し、決定処理猶予（60分）の方を削る
+    # 決定処理猶予（60分）の方を削る
     run_time = dt - datetime.timedelta(minutes=15)
 
 elif 4 <= time_left < 30:
@@ -244,7 +241,7 @@ elif 4 <= time_left < 30:
     run_time = now + datetime.timedelta(minutes=time_left / 2)
 
 else:
-    # ④ 猶予4分未満:
+    # 猶予4分未満:
     # 開始時刻の1分前に決定処理を行う
     run_time = dt - datetime.timedelta(minutes=1)
     
