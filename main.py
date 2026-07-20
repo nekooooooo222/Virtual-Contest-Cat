@@ -226,8 +226,7 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
         # 猶予75分以上:
         run_time_90 = dt - datetime.timedelta(minutes=90)
         run_time_60_from_now = now + datetime.timedelta(minutes=60)
-    
- add-awc-support
+
         # どちらか未来の方（遅い方）を採用
         run_time = max(run_time_90, run_time_60_from_now)
     
@@ -254,26 +253,6 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
             run_time = now
     # どちらか未来の方（遅い方）を採用
     run_time = max(run_time_90, run_time_60_from_now)
-
-elif 30 <= time_left < 75:
-    # 猶予30分以上～75分未満:
-    # 決定処理猶予（60分）の方を削る
-    run_time = dt - datetime.timedelta(minutes=15)
-
-elif 3 <= time_left < 30:
-    # 猶予4分以上～30分未満:
-    # 開始時刻猶予と決定処理猶予を半分ずつ割り当てる
-    run_time = now + datetime.timedelta(minutes=time_left / 2)
-
-else:
-    # 猶予4分未満:
-    # 開始時刻の1分前に決定処理を行う
-    run_time = dt - datetime.timedelta(minutes=1)
-    
-    # 猶予が1分未満（例えば30秒後）で、すでに「1分前」が過去になってしまう場合のフェイルセーフ
-    if run_time < now:
-        run_time = now
-main
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
