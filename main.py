@@ -199,13 +199,13 @@ async def register(interaction: discord.Interaction, atcoder_id: str):
 @app_commands.describe(
     start_time="開始日時 (例: 2026-06-18 21:00)",
     contest_id="コンテスト回を固定する場合に入力するにゃ (例: abc250)",
-    type="コンテストの種類を指定するにゃ (abc, arc, agc, ahc_short, ahc_long)",
+    type="コンテストの種類を指定するにゃ (abc, arc, agc, awc, ahc_short, ahc_long)",
     comment="募集メッセージにコメントを添えるにゃ \nあなたのメッセージセンスが問われるにゃ～"
 )
 async def vcontest(interaction: discord.Interaction, start_time: str, contest_id: str = None, type: str = "abc", comment: str = None):
     type = type.lower()
-    if type not in ["abc", "arc", "agc", "ahc_short", "ahc_long"]:
-        return await interaction.response.send_message("typeは abc, arc, agc, ahc_short, ahc_long のいずれかを指定してにゃ！", ephemeral=True)
+    if type not in ["abc", "arc", "agc", "awc", "ahc_short", "ahc_long"]:
+        return await interaction.response.send_message("typeは abc, arc, agc, awc, ahc_short, ahc_long のいずれかを指定してにゃ！", ephemeral=True)
 
     try:
         dt = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M").replace(tzinfo=JST)
@@ -214,19 +214,44 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
     
 
 
-now = datetime.datetime.now(JST)
-# 過去なら爆破
-if dt < now:
-    return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
+    now = datetime.datetime.now(JST)
+    # 過去なら爆破
+    if dt < now:
+        return await interaction.response.send_message("開始時間が過去だにゃ。\n時間は過去には巻き戻せないにゃ～", ephemeral=True)
 
-# 現在から開始時刻（dt）までの残り猶予（分）を計算
-time_left = (dt - now).total_seconds() / 60.0
+    # 現在から開始時刻（dt）までの残り猶予（分）を計算
+    time_left = (dt - now).total_seconds() / 60.0
 
-if time_left >= 75:
-    # 猶予75分以上:
-    run_time_90 = dt - datetime.timedelta(minutes=90)
-    run_time_60_from_now = now + datetime.timedelta(minutes=60)
+    if time_left >= 75:
+        # 猶予75分以上:
+        run_time_90 = dt - datetime.timedelta(minutes=90)
+        run_time_60_from_now = now + datetime.timedelta(minutes=60)
     
+ add-awc-support
+        # どちらか未来の方（遅い方）を採用
+        run_time = max(run_time_90, run_time_60_from_now)
+    
+        # ※もし「常に開始15分前」に固定したい場合は、これらを消して以下1行にしてください
+        # run_time = dt - datetime.timedelta(minutes=15)
+
+    elif 30 <= time_left < 75:
+        # 猶予30分以上～75分未満:
+        # 開始時刻猶予（15分）を死守し、決定処理猶予（60分）の方を削る
+        run_time = dt - datetime.timedelta(minutes=15)
+
+    elif 4 <= time_left < 30:
+        # 猶予4分以上～30分未満:
+        # 開始時刻猶予と決定処理猶予を半分ずつ割り当てる
+        run_time = now + datetime.timedelta(minutes=time_left / 2)
+
+    else:
+        # ④ 猶予4分未満:
+        # 開始時刻の1分前に決定処理を行う
+        run_time = dt - datetime.timedelta(minutes=1)
+
+        # 猶予が1分未満（例えば30秒後）で、すでに「1分前」が過去になってしまう場合のフェイルセーフ
+        if run_time < now:
+            run_time = now
     # どちらか未来の方（遅い方）を採用
     run_time = max(run_time_90, run_time_60_from_now)
 
@@ -248,6 +273,7 @@ else:
     # 猶予が1分未満（例えば30秒後）で、すでに「1分前」が過去になってしまう場合のフェイルセーフ
     if run_time < now:
         run_time = now
+main
 
     comment_text = f"💬 {comment}\n\n" if comment else ""
     
@@ -319,6 +345,9 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
             elif ctype == "agc":
                 if cid.startswith("agc") and cid[3:6].isdigit() and int(cid[3:6]) >= 10:
                     target_contests.add(cid)
+            elif ctype == "awc":
+                if cid.startswith("awc") and cid[3:7].isdigit() and int(cid[3:7]) % 100 != 0:
+                    target_contests.add(cid)
             elif ctype == "ahc_short":
                 if cid.startswith("ahc") and cid[3:6].isdigit() and int(cid[3:6]) >= 10 and dur <= 86400:
                     target_contests.add(cid)
@@ -365,6 +394,8 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
                 total_score = 0
                 score_4_over = 0
                 ac_2_count = 0
+                awc_400_over = 0
+                awc_3_ac = 0
 
                 if ctype == "abc":
                     is_6_prob = (126 <= int(cid[3:6]) <= 211)
@@ -379,6 +410,18 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
                         total_score += score
                         if score >= 4: score_4_over += 1
                     if not exclude and (score_4_over / len(atcoder_ids)) < 0.35:
+                        valid_contests.append((cid, total_score))
+                elif ctype == "awc":
+                    threshold = len(atcoder_ids) / 10
+                    for user in atcoder_ids:
+                        ac_dict = user_ac_data[user].get(cid, {})
+                        if any(point >= 400 for point in ac_dict.values()):
+                            awc_400_over += 1
+                        if len(ac_dict) >= 3:
+                            awc_3_ac += 1
+                        if awc_400_over >= threshold or awc_3_ac >= threshold:
+                            exclude = True; break
+                    if not exclude:
                         valid_contests.append((cid, total_score))
                 else:
                     for user in atcoder_ids:
