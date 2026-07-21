@@ -16,6 +16,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from aiohttp import web
 
+
 # ==========================================
 # 設定とデータベース
 # ==========================================
