@@ -280,6 +280,59 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
 
     scheduler.add_job(decide_vcontest, 'date', run_date=run_time, args=[interaction.channel_id, msg.id, dt, contest_id])
 
+@bot.tree.command(name="vlist", description="予定されているバチャコンの一覧を表示するにゃ")
+async def vlist(interaction: discord.Interaction):
+    if not vcons_data:
+        return await interaction.response.send_message("現在予定されているバチャコンはないにゃ！", ephemeral=True)
+    
+    embed = discord.Embed(
+        title="📋 バチャコン予定一覧", 
+        color=discord.Color.blue()
+    )
+    
+    for msg_id_str, v_data in vcons_data.items():
+        msg_id = int(msg_id_str)
+        ch_id = v_data.get("channel_id")
+        
+        # チャンネルのメンション表示
+        channel = bot.get_channel(ch_id)
+        ch_mention = channel.mention if channel else f"チャンネルID: {ch_id}"
+        
+        # 開始時間のフォーマット整形
+        start_time_raw = v_data.get("start_time", "")
+        try:
+            dt = datetime.datetime.fromisoformat(start_time_raw)
+            time_str = dt.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            time_str = start_time_raw
+
+        # コンテスト情報の構築 (vcontestの表示に準拠)
+        contest_id = v_data.get("contest_id")
+        ctype = v_data.get("type", "abc").upper()
+        if contest_id:
+            contest_info = f"👉 開催予定: **{contest_id.upper()}**"
+        else:
+            contest_info = f"👉 対象コンテスト: **{ctype}**"
+
+        # --- 👥 募集メッセージと同じロジックで参加者文字列を作成 ---
+        participant_ids = vcon_sessions.get(msg_id, set())
+        participants_mentions = [f"<@{uid}>" for uid in participant_ids]
+        join_text = " ".join(participants_mentions) if participants_mentions else "まだいないにゃ"
+
+        # Embedにセット
+        embed.add_field(
+            name=f"📍 チャンネル: {ch_mention}",
+            value=(
+                f"⏰ **開始時間:** {time_str}\n"
+                f"{contest_info}\n\n"
+                f"**【現在の参加者】**\n{join_text}"
+            ),
+            inline=False
+        )
+    
+    # 実行した人にだけ表示（ephemeral=True）
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # ==========================================
 # コンテスト決定
 # ==========================================
