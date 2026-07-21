@@ -506,7 +506,7 @@ async def decide_vcontest(channel_id, message_id, start_dt, force_contest_id=Non
     await channel.send(
         f"**今回のバチャコンの回が決定したにゃ！！**\n👉 **{chosen_cid.upper()}** (https://atcoder.jp/contests/{chosen_cid})\n"
         f"開始時間は **{start_dt.strftime('%m/%d %H:%M')}** だにゃ！\n"
-        f"**ライブ順位表はここにゃ:**  https://virtual-contest-cat.onrender.com/{chosen_cid.upper()}\n"
+        f"**ライブ順位表はここにゃ:**  https://virtual-contest-cat.up.railway.app/{chosen_cid.upper()}\n"
     )
 
     scheduler.add_job(live_standings_loop, 'date', run_date=start_dt, args=[channel_id, message_id, chosen_cid, start_dt, duration_sec])
@@ -520,7 +520,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
     import traceback 
     global last_ws_data 
     channel = bot.get_channel(channel_id)
-    if channel: await channel.send(f"**{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL:  https://virtual-contest-cat.onrender.com/{cid.upper()}\n")
+    if channel: await channel.send(f"**{cid.upper()} ライブ順位表が起動したにゃ！**\n👉 URL:  https://virtual-contest-cat.up.railway.app/{cid.upper()}\n")
 
     start_epoch = int(start_dt.timestamp())
     end_dt = start_dt + datetime.timedelta(seconds=duration_sec)
