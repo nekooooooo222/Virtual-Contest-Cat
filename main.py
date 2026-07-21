@@ -1100,7 +1100,12 @@ async def handle_index(request):
     try:
         with open("index.html", "r", encoding="utf-8") as f:
             html = f.read()
-            ws_url = "wss://" + request.host + f"/{contest_id}/ws" if "onrender.com" in request.host else "ws://" + request.host + f"/{contest_id}/ws"
+            
+            # 【修正箇所】localhost 以外（Railway等）はすべて wss:// を使用するように変更
+            is_secure = "localhost" not in request.host
+            ws_protocol = "wss://" if is_secure else "ws://"
+            ws_url = f"{ws_protocol}{request.host}/{contest_id}/ws"
+            
             html = html.replace("/* WEBSOCKET_INJECTION_POINT */", f"var WS_URL = '{ws_url}';")
         return web.Response(text=html, content_type='text/html')
     except Exception as e:
