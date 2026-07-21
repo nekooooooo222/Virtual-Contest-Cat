@@ -42,7 +42,7 @@ def test_atcoder_connection():
                 print(f" 参加者数: {len(data.get('StandingsData', []))} 人")
             except json.JSONDecodeError:
                 print("JSON解析失敗")
-                print("   ステータス200ですが、中身がJSONではありません。")
+                print("   ステータス200ですが、中身がJSONではありません。 ")
         elif res_json.status_code == 403:
             print("APIブロック")
             print("   APIへのアクセスがセキュリティで弾かれました。")
