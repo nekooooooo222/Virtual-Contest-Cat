@@ -286,7 +286,7 @@ async def vlist(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     if not vcons_data:
-        return await interaction.response.send_message("現在予定されているバチャコンはないにゃ！", ephemeral=True)
+        return await interaction.followup.send("現在予定されているバチャコンはないにゃ！", ephemeral=True)
     
     embed = discord.Embed(
         title="📋 バチャコン予定一覧", 
