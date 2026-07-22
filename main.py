@@ -607,14 +607,15 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                     user_ratings[user] = 0
                 await asyncio.sleep(0.7)
 
-        # 監視メインループ
+# 監視メインループ
         while datetime.datetime.now(JST) < end_dt:
             loop_start_time = datetime.datetime.now(JST)
             try: 
                 discord_ids = list(vcon_sessions.get(message_id, set()))
-                interval = 60 if is_ahc and duration_sec > 86400 else 7 #ループ内処理でかかった時間も含めて7s
+                interval = 60 if is_ahc and duration_sec > 86400 else 7 # ループ内処理を含めて7s周期
                 
                 active_users = set(users_data.get(d_id) for d_id in discord_ids if users_data.get(d_id))
+                active_users_lower = {u.lower(): u for u in active_users}
                 
                 # 途中参加者や新規ユーザーの初期化およびレート取得
                 for user in active_users:
@@ -639,6 +640,10 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                     url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}"
                     try:
                         async with session.get(url, timeout=10) as r:
+                            # ログイン切れチェック（ログイン画面リダイレクト）
+                            if "login" in str(r.url):
+                                print(f"⚠️ [{cid}] REVEL_SESSIONが無効または期限切れだにゃ！")
+                                break
                             if r.status == 200:
                                 pages_html.append(await r.text())
                     except Exception: pass
@@ -654,25 +659,34 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                     if not rows: continue
                     
                     for row in rows:
-                        sub_id = row.get('data-id')
+                        cells = row.find_all('td')
+                        if len(cells) < 10: continue
+
+                        # 【修正】1. sub_id を「詳細」リンク(cells[9])のhref末尾から抽出
+                        detail_a = cells[9].find('a')
+                        if not detail_a or not detail_a.get('href'): continue
+                        sub_id = detail_a.get('href').rstrip('/').split('/')[-1]
+
                         if not sub_id or sub_id in processed_sub_ids:
                             continue
                             
-                        cells = row.find_all('td')
-                        if len(cells) < 8: continue
+                        # 【修正】2. ユーザー名の抽出（/users/ を含むリンクを正確に取得＆大文字小文字対応）
+                        user_a = cells[2].find('a', href=lambda h: h and '/users/' in h)
+                        if not user_a: continue
+                        raw_sub_user = user_a.get('href', '').rstrip('/').split('/')[-1]
                         
-                        user_link = cells[2].find('a')
-                        if not user_link: continue
-                        sub_user = user_link.get('href', '').split('/')[-1]
-                        
-                        if sub_user not in active_users:
+                        if raw_sub_user.lower() not in active_users_lower:
                             continue
+                        sub_user = active_users_lower[raw_sub_user.lower()]
                             
                         time_tag = cells[0].find('time')
                         if not time_tag: continue
-                        sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
+                        try:
+                            sub_epoch = int(datetime.datetime.strptime(time_tag.text[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST).timestamp())
+                        except ValueError:
+                            continue
                         
-                        if not (start_epoch <= sub_epoch <= int(datetime.datetime.now(JST).timestamp())):
+                        if sub_epoch < start_epoch:
                             continue
                             
                         task_link = cells[1].find('a')
@@ -684,7 +698,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                             task_idx = 'A'
 
                         score_text = cells[4].text.strip()
-                        score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0
+                        score = float(score_text) if score_text.replace('.', '', 1).isdigit() else 0.0
                         result_label = cells[6].find('span')
                         result = result_label.text.strip() if result_label else "WJ"
                         
@@ -735,12 +749,12 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                         elapsed_sec = sub["epoch_second"] - start_epoch
                         point = sub.get("point", 0)
                         
+                        # 【修正】3. 最高得点更新時とペナルティ加算のロジック分離（AC提出が不当に加算されるバグ修正）
                         if point > p_data['point']:
                             p_data['point'] = point
                             p_data['ac_time'] = elapsed_sec
                             p_data['penalties'] = p_data['temp_penalties']
-                            
-                        if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                        elif sub["result"] not in ["AC", "CE", "IE", "WJ", "WR"]:
                             p_data['temp_penalties'] += 1
 
                     total_score = sum(p['point'] for p in problem_status.values())
