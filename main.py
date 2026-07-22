@@ -283,8 +283,10 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
 
 @bot.tree.command(name="vlist", description="予定されているバチャコンの一覧を表示するにゃ")
 async def vlist(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
     if not vcons_data:
-        return await interaction.response.send_message("現在予定されているバチャコンはないにゃ！", ephemeral=True)
+        return await interaction.followup.send("現在予定されているバチャコンはないにゃ！", ephemeral=True)
     
     embed = discord.Embed(
         title="📋 バチャコン予定一覧", 
@@ -332,7 +334,7 @@ async def vlist(interaction: discord.Interaction):
         )
     
     # 実行した人にだけ表示（ephemeral=True）
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # ==========================================
 # コンテスト決定
