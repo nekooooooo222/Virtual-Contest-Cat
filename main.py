@@ -949,6 +949,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
                             pages_html.append(await r.text())
                         else: break
                 except: break
+                await asyncio.sleep(1.0) # アクセス制限回避のウェイト
             return user, current_rating, pages_html
 
         tasks_req = [fetch_final_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
@@ -1006,7 +1007,7 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
                     p_data['ac_time'] = elapsed_sec
                     p_data['penalties'] = p_data['temp_penalties']
                 
-                if sub["result"] not in ["CE", "IE", "WJ", "WR"]:
+                if sub["result"] not in ["AC", "CE", "IE", "WJ", "WR"]:
                     p_data['temp_penalties'] += 1
 
             total_score = sum(p['point'] for p in problem_status.values())
