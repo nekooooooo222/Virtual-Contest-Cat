@@ -283,6 +283,8 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
 
 @bot.tree.command(name="vlist", description="予定されているバチャコンの一覧を表示するにゃ")
 async def vlist(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
     if not vcons_data:
         return await interaction.response.send_message("現在予定されているバチャコンはないにゃ！", ephemeral=True)
     
