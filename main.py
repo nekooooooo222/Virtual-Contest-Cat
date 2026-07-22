@@ -334,7 +334,7 @@ async def vlist(interaction: discord.Interaction):
         )
     
     # 実行した人にだけ表示（ephemeral=True）
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # ==========================================
 # コンテスト決定
