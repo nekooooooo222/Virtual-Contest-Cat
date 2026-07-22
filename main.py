@@ -283,58 +283,73 @@ async def vcontest(interaction: discord.Interaction, start_time: str, contest_id
 
 @bot.tree.command(name="vlist", description="予定されているバチャコンの一覧を表示するにゃ")
 async def vlist(interaction: discord.Interaction):
+    # インタラクション応答の保留
     await interaction.response.defer(ephemeral=True)
 
-    if not vcons_data:
-        return await interaction.followup.send("現在予定されているバチャコンはないにゃ！", ephemeral=True)
-    
-    embed = discord.Embed(
-        title="📋 バチャコン予定一覧", 
-        color=discord.Color.blue()
-    )
-    
-    for msg_id_str, v_data in vcons_data.items():
-        msg_id = int(msg_id_str)
-        ch_id = v_data.get("channel_id")
-        
-        # チャンネルのメンション表示
-        channel = bot.get_channel(ch_id)
-        ch_mention = channel.mention if channel else f"チャンネルID: {ch_id}"
-        
-        # 開始時間のフォーマット整形
-        start_time_raw = v_data.get("start_time", "")
-        try:
-            dt = datetime.datetime.fromisoformat(start_time_raw)
-            time_str = dt.strftime("%Y-%m-%d %H:%M")
-        except ValueError:
-            time_str = start_time_raw
+    try:
+        now = datetime.datetime.now(JST)
+        active_vcons = []
 
-        # コンテスト情報の構築 (vcontestの表示に準拠)
-        contest_id = v_data.get("contest_id")
-        ctype = v_data.get("type", "abc").upper()
-        if contest_id:
-            contest_info = f"👉 開催予定: **{contest_id.upper()}**"
-        else:
-            contest_info = f"👉 対象コンテスト: **{ctype}**"
+        # 1. 未来の開始予定のバチャコンのみをフィルタリング
+        for msg_id_str, v_data in vcons_data.items():
+            start_time_raw = v_data.get("start_time", "")
+            try:
+                start_dt = datetime.datetime.fromisoformat(start_time_raw)
+                # JSTタイムゾーンの補正が必要な場合にも対応
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=JST)
+                
+                # 開始前（未来）のデータのみを対象とする
+                if start_dt > now:
+                    active_vcons.append((int(msg_id_str), v_data, start_dt))
+            except Exception:
+                continue
 
-        # --- 👥 募集メッセージと同じロジックで参加者文字列を作成 ---
-        participant_ids = vcon_sessions.get(msg_id, set())
-        participants_mentions = [f"<@{uid}>" for uid in participant_ids]
-        join_text = " ".join(participants_mentions) if participants_mentions else "まだいないにゃ"
+        if not active_vcons:
+            return await interaction.followup.send("現在予定されているバチャコンはないにゃ！", ephemeral=True)
 
-        # Embedにセット
-        embed.add_field(
-            name=f"📍 チャンネル: {ch_mention}",
-            value=(
-                f"⏰ **開始時間:** {time_str}\n"
-                f"{contest_info}\n\n"
-                f"**【現在の参加者】**\n{join_text}"
-            ),
-            inline=False
+        # 2. 開始時間が近い順にソート
+        active_vcons.sort(key=lambda x: x[2])
+
+        embed = discord.Embed(
+            title="📋 バチャコン予定一覧", 
+            color=discord.Color.blue()
         )
-    
-    # 実行した人にだけ表示（ephemeral=True）
-    await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # 3. Discordの制限（最大25件）を超えないようにスライス [:25]
+        for msg_id, v_data, start_dt in active_vcons[:25]:
+            ch_id = v_data.get("channel_id")
+            channel = bot.get_channel(ch_id)
+            ch_mention = channel.mention if channel else f"チャンネルID: {ch_id}"
+            
+            time_str = start_dt.strftime("%Y-%m-%d %H:%M")
+
+            contest_id = v_data.get("contest_id")
+            ctype = v_data.get("type", "abc").upper()
+            if contest_id:
+                contest_info = f"👉 開催予定: **{contest_id.upper()}**"
+            else:
+                contest_info = f"👉 対象コンテスト: **{ctype}**"
+
+            participant_ids = vcon_sessions.get(msg_id, set())
+            participants_mentions = [f"<@{uid}>" for uid in participant_ids]
+            join_text = " ".join(participants_mentions) if participants_mentions else "まだいないにゃ"
+
+            embed.add_field(
+                name=f"📍 チャンネル: {ch_mention}",
+                value=(
+                    f"⏰ **開始時間:** {time_str}\n"
+                    f"{contest_info}\n\n"
+                    f"**【現在の参加者】**\n{join_text}"
+                ),
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        print(f"vlistコマンドエラー: {e}")
+        await interaction.followup.send(f"一覧の表示中にエラーが発生したにゃ: `{e}`", ephemeral=True)
 
 # ==========================================
 # コンテスト決定
