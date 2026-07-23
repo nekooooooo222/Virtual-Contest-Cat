@@ -624,7 +624,7 @@ async def live_standings_loop(channel_id, message_id, cid, start_dt, duration_se
                     user_ratings[user] = 0
                 await asyncio.sleep(0.7)
 
-# 監視メインループ
+        # 監視メインループ
         while datetime.datetime.now(JST) < end_dt:
             loop_start_time = datetime.datetime.now(JST)
             try: 
@@ -947,27 +947,33 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
     ranking_data = []
 
     async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+        sem = asyncio.Semaphore(2)
         async def fetch_final_user_data(user):
-            current_rating = 0
-            try:
-                contest_type_param = "?contestType=heuristic" if is_ahc else ""
-                async with session.get(f"https://atcoder.jp/users/{user}/history/json{contest_type_param}", timeout=10) as r:
-                    if r.status == 200:
-                        history = await r.json()
-                        current_rating = history[-1].get("NewRating", 0) if history else 0
-            except: pass
-
-            pages_html = []
-            for page in range(1, 4):
+            async with sem:
+                current_rating = 0
                 try:
-                    url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
-                    async with session.get(url, timeout=10) as r:
+                    contest_type_param = "?contestType=heuristic" if is_ahc else ""
+                    async with session.get(f"https://atcoder.jp/users/{user}/history/json{contest_type_param}", timeout=10) as r:
                         if r.status == 200:
-                            pages_html.append(await r.text())
-                        else: break
-                except: break
-                await asyncio.sleep(1.0) # アクセス制限回避のウェイト
-            return user, current_rating, pages_html
+                            history = await r.json()
+                            current_rating = history[-1].get("NewRating", 0) if history else 0
+                except Exception:
+                    pass
+
+                pages_html = []
+                for page in range(1, 4):
+                    if page > 1:
+                        await asyncio.sleep(1.0) # アクセス制限回避のウェイト
+                    try:
+                        url = f"https://atcoder.jp/contests/{cid}/submissions?page={page}&f.User={user}"
+                        async with session.get(url, timeout=10) as r:
+                            if r.status == 200:
+                                pages_html.append(await r.text())
+                            else:
+                                break
+                    except Exception:
+                        break
+                return user, current_rating, pages_html
 
         tasks_req = [fetch_final_user_data(users_data[d_id]) for d_id in discord_ids if users_data.get(d_id)]
         final_results = await asyncio.gather(*tasks_req)
@@ -1035,13 +1041,16 @@ async def aggregate_vcontest(channel_id, message_id, cid, start_dt, duration_sec
             else: elapsed_penalty_sec = last_ac_time + (total_penalties * 300)
             
             v_rank = 1
-            if not is_ahc:
+            if not is_ahc and standings and "StandingsData" in standings:
                 for s in standings["StandingsData"]:
-                    s_score = s["TotalResult"]["Score"] / 100
-                    s_elapsed = s["TotalResult"]["Elapsed"] / 1000000000
-                    if s_score > total_score: v_rank += 1
-                    elif s_score == total_score and s_elapsed < elapsed_penalty_sec: v_rank += 1
-                
+                    total_res = s.get("TotalResult", {})
+                    s_score = total_res.get("Score", 0) / 100
+                    s_elapsed = total_res.get("Elapsed", 0) / 1000000000
+                    if s_score > total_score: 
+                        v_rank += 1
+                    elif s_score == total_score and s_elapsed < elapsed_penalty_sec: 
+                        v_rank += 1
+
             perf = "-"
             if not is_ahc:
                 if valid_ranks:
